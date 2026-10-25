@@ -118,8 +118,10 @@ const Server = struct {
         for (boxes) |box| {
             const t: *Toplevel = box.window;
             _ = c.wlr_scene_node_set_position(&t.scene_tree.node, box.x - vx, box.y);
-            // 同じサイズなら wlroots 側で configure は抑制される
-            _ = c.wlr_xdg_toplevel_set_size(t.xdg_toplevel, box.w, box.h);
+            // initial commit 前の surface への schedule_configure は assert 死亡する
+            if (t.base.initial_commit) {
+                _ = c.wlr_xdg_toplevel_set_size(t.xdg_toplevel, box.w, box.h);
+            }
         }
     }
 };
