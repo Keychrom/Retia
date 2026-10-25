@@ -38,6 +38,15 @@ const c = @cImport({
 /// テスト: キーバインドの mod。niri 互換のデフォルトは Super (SPEC §5)
 const MODIFIER: u32 = c.WLR_MODIFIER_LOGO;
 
+/// wlr_log マクロは __LINE__ を埋め込むため translate-c できない。自前のログに寄せる
+fn logInfo(comptime fmt: []const u8, args: anytype) void {
+    std.debug.print("[retia] " ++ fmt ++ "\n", args);
+}
+
+fn logErr(comptime fmt: []const u8, args: anytype) void {
+    std.debug.print("[retia] ERROR: " ++ fmt ++ "\n", args);
+}
+
 const Toplevel = struct {
     xdg_surface: *c.wlr_xdg_surface,
     scene_tree: *c.wlr_scene_tree,
@@ -130,13 +139,13 @@ pub fn main() !void {
 
     _ = c.signal(c.SIGINT, handleSigint);
 
-    c.wlr_log(c.WLR_INFO, "retia M1 starting (WAYLAND_DISPLAY=%s)", server.socket_name.ptr);
+    logInfo("M1 starting, WAYLAND_DISPLAY={s}", .{server.socket_name});
     _ = c.wl_display_run(server.display);
 }
 
 // ---- 出力 ----
 
-fn handleNewOutput(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const output: *c.wlr_output = @ptrCast(@alignCast(data.?));
 
@@ -150,18 +159,18 @@ fn handleNewOutput(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) voi
         }
         c.wlr_output_state_set_enabled(&state, true);
         if (!c.wlr_output_commit_state(output, &state)) {
-            c.wlr_log(c.WLR_ERROR, "failed to commit output state: %s", output.name);
+            logErr("failed to commit output state: {s}", .{std.mem.sliceTo(&output.name, 0)});
             return;
         }
     }
 
     _ = c.wlr_output_layout_add_auto(server.layout, output);
-    c.wlr_log(c.WLR_INFO, "output added: %s", output.name);
+    logInfo("output added: {s}", .{std.mem.sliceTo(&output.name, 0)});
 }
 
 // ---- 入力デバイス ----
 
-fn handleNewInput(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleNewInput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const device: *c.wlr_input_device = @ptrCast(@alignCast(data.?));
 
@@ -198,18 +207,18 @@ fn handleNewKeyboard(wlr_kb: *c.wlr_keyboard) void {
     c.wl_signal_add(&wlr_kb.events.destroy, &kb.destroy);
 
     c.wlr_seat_set_keyboard(server.seat, wlr_kb);
-    c.wlr_log(c.WLR_INFO, "keyboard added");
+    logInfo("keyboard added", .{});
 }
 
-fn handleKeyboardModifiers(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleKeyboardModifiers(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const kb: *Keyboard = @fieldParentPtr("modifiers", listener);
+    const kb: *Keyboard = @fieldParentPtr("modifiers", listener.?);
     c.wlr_seat_set_keyboard(server.seat, kb.wlr_keyboard);
     c.wlr_seat_keyboard_notify_modifiers(server.seat, &kb.wlr_keyboard.modifiers);
 }
 
-fn handleKeyboardKey(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
-    const kb: *Keyboard = @fieldParentPtr("key", listener);
+fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    const kb: *Keyboard = @fieldParentPtr("key", listener.?);
     const event: *c.wlr_keyboard_key_event = @ptrCast(@alignCast(data.?));
     const wlr_kb = kb.wlr_keyboard;
 
@@ -238,9 +247,9 @@ fn handleKeyboardKey(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) v
     c.wlr_seat_keyboard_notify_key(server.seat, event.time_msec, event.keycode, event.state);
 }
 
-fn handleKeyboardDestroy(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleKeyboardDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const kb: *Keyboard = @fieldParentPtr("destroy", listener);
+    const kb: *Keyboard = @fieldParentPtr("destroy", listener.?);
     c.wl_list_remove(&kb.modifiers.link);
     c.wl_list_remove(&kb.key.link);
     c.wl_list_remove(&kb.destroy.link);
@@ -253,16 +262,16 @@ fn spawnTerminal() void {
     if (pid == 0) {
         // 子プロセス: WAYLAND_DISPLAY は親で setenv 済み。失敗したら _exit で落とす
         _ = c.execlp("kitty", "kitty", @as(?*const anyopaque, null));
-        c.wlr_log(c.WLR_ERR, "exec kitty failed");
+        logErr("exec kitty failed", .{});
         c._exit(1);
     } else if (pid < 0) {
-        c.wlr_log(c.WLR_ERR, "fork failed");
+        logErr("fork failed", .{});
     }
 }
 
 // ---- XDG シェル (窓) ----
 
-fn handleNewXdgSurface(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleNewXdgSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const xdg_surface: *c.wlr_xdg_surface = @ptrCast(@alignCast(data.?));
     if (xdg_surface.role != c.WLR_XDG_SURFACE_ROLE_TOPLEVEL) return;
@@ -295,9 +304,9 @@ fn handleNewXdgSurface(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c)
     c.wl_signal_add(&toplevel_handle.events.request_fullscreen, &toplevel.request_fullscreen);
 }
 
-fn handleToplevelMap(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("map", listener);
+    const toplevel: *Toplevel = @fieldParentPtr("map", listener.?);
 
     // M1 レイアウト: レイアウト全面 (M2 でスクロール列に置き換え)
     const size = layoutSize();
@@ -308,15 +317,15 @@ fn handleToplevelMap(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) v
     focusToplevel(toplevel);
 }
 
-fn handleToplevelUnmap(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleToplevelUnmap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("unmap", listener);
+    const toplevel: *Toplevel = @fieldParentPtr("unmap", listener.?);
     if (server.focused == toplevel) server.focused = null;
 }
 
-fn handleToplevelDestroy(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleToplevelDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("destroy", listener);
+    const toplevel: *Toplevel = @fieldParentPtr("destroy", listener.?);
     c.wl_list_remove(&toplevel.map.link);
     c.wl_list_remove(&toplevel.unmap.link);
     c.wl_list_remove(&toplevel.destroy.link);
@@ -327,18 +336,18 @@ fn handleToplevelDestroy(listener: *c.wl_listener, data: ?*anyopaque) callconv(.
 }
 
 /// 最大化/フルスクリーン要求は M1 では全部「レイアウト全面」で応える
-fn handleToplevelRequestMaximize(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleToplevelRequestMaximize(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("request_maximize", listener);
+    const toplevel: *Toplevel = @fieldParentPtr("request_maximize", listener.?);
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_surface.toplevel.?, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_maximized(toplevel.xdg_surface.toplevel.?, true);
     _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_surface);
 }
 
-fn handleToplevelRequestFullscreen(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("request_fullscreen", listener);
+    const toplevel: *Toplevel = @fieldParentPtr("request_fullscreen", listener.?);
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_surface.toplevel.?, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_fullscreen(toplevel.xdg_surface.toplevel.?, true);
@@ -367,14 +376,14 @@ fn layoutSize() struct { w: u32, h: u32 } {
 
 // ---- ポインタ ----
 
-fn handleCursorMotion(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleCursorMotion(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_motion_event = @ptrCast(@alignCast(data.?));
     c.wlr_cursor_move(server.cursor, &event.pointer.base, event.delta_x, event.delta_y);
     processPointerMotion(event.time_msec);
 }
 
-fn handleCursorMotionAbsolute(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleCursorMotionAbsolute(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_motion_absolute_event = @ptrCast(@alignCast(data.?));
     c.wlr_cursor_warp_absolute(server.cursor, &event.pointer.base, event.x, event.y);
@@ -396,7 +405,7 @@ fn processPointerMotion(time_msec: u32) void {
     c.wlr_seat_pointer_notify_clear_focus(server.seat);
 }
 
-fn handleCursorButton(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleCursorButton(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_button_event = @ptrCast(@alignCast(data.?));
     // クリックフォーカスは M2 (toplevel 一覧を持ってから)
