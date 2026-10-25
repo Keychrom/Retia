@@ -361,6 +361,7 @@ fn handleNewXdgSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(
     _ = listener;
     const xdg_surface: *c.wlr_xdg_surface = @ptrCast(@alignCast(data.?));
     if (xdg_surface.role != c.WLR_XDG_SURFACE_ROLE_TOPLEVEL) return;
+    logInfo("new xdg surface (toplevel)", .{});
     // 匿名 union (xdg_surface.toplevel) は cimport から直接触れないため accessor を使う
     const toplevel_handle: *c.wlr_xdg_toplevel = @ptrCast(c.wlr_xdg_toplevel_try_from_wlr_surface(xdg_surface.surface) orelse return);
 
@@ -397,6 +398,7 @@ fn handleNewXdgSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(
 fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
     const toplevel: *Toplevel = @fieldParentPtr("map", @as(*c.wl_listener, @ptrCast(listener)));
+    logInfo("toplevel mapped: {s}", .{outputName_toplevel(toplevel)});
 
     // M1 レイアウト: レイアウト全面 (M2 でスクロール列に置き換え)
     const size = layoutSize();
@@ -410,6 +412,7 @@ fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
 fn handleToplevelUnmap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
     const toplevel: *Toplevel = @fieldParentPtr("unmap", @as(*c.wl_listener, @ptrCast(listener)));
+    logInfo("toplevel unmapped", .{});
     if (server.focused == toplevel) server.focused = null;
 }
 
@@ -463,6 +466,12 @@ fn layoutSize() struct { w: i32, h: i32 } {
         return .{ .w = box.width, .h = box.height };
     }
     return .{ .w = 1024, .h = 768 };
+}
+
+/// デバッグ用: toplevel の app_id を取る (取れなければ仮名)
+fn outputName_toplevel(toplevel: *Toplevel) []const u8 {
+    if (toplevel.xdg_toplevel.app_id) |app_id| return std.mem.span(app_id);
+    return "(no app-id)";
 }
 
 // ---- ポインタ ----
