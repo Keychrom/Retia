@@ -63,6 +63,12 @@ const Toplevel = struct {
     /// 所属ワークスペース (0 始点)
     ws: usize,
     fullscreen: bool = false,
+    /// 浮動窓 (SPEC §4.2 toggle-window-floating)
+    floating: bool = false,
+    fx: i32 = 0,
+    fy: i32 = 0,
+    fw: i32 = 0,
+    fh: i32 = 0,
 
     map: c.wl_listener,
     unmap: c.wl_listener,
@@ -79,6 +85,13 @@ const Popup = struct {
 };
 
 const WORKSPACE_COUNT = 9;
+
+/// ポインタのドラッグ状態 (SPEC §5: mod+左ドラッグ移動 / mod+右ドラッグリサイズ)
+const CursorMode = enum {
+    passthrough,
+    move,
+    resize,
+};
 
 const SceneLayout = layout_mod.Layout(*Toplevel);
 
@@ -117,6 +130,12 @@ const Server = struct {
     toplevels: std.ArrayList(*Toplevel) = .empty,
     viewport_x: f64 = 0,
     outputs: std.ArrayList(*Output) = .empty,
+    cursor_mode: CursorMode = .passthrough,
+    grabbed: ?*Toplevel = null,
+    grab_x: f64 = 0,
+    grab_y: f64 = 0,
+    grab_w: i32 = 0,
+    grab_h: i32 = 0,
     focused: ?*Toplevel = null,
 
     new_output: c.wl_listener = undefined,
@@ -176,6 +195,18 @@ const Server = struct {
             c.wlr_scene_rect_set_color(t.focus_rect, &color);
             c.wlr_scene_rect_set_size(t.focus_rect, box.w + 4, box.h + 4);
             _ = c.wlr_scene_node_set_position(&t.focus_rect.node, box.x - vx - 2, box.y - 2);
+        }
+
+        // 浮動窓 (レイアウト外): 固定位置・サイズ、リングも自分のサイズで
+        for (self.toplevels.items) |t| {
+            if (!t.floating or t.ws != self.active_ws or t.fullscreen) continue;
+            _ = c.wlr_scene_node_set_enabled(&t.scene_tree.node, true);
+            _ = c.wlr_scene_node_set_position(&t.scene_tree.node, t.fx - vx, t.fy);
+            const is_focused = self.focused == t;
+            const fcolor: [4]f32 = if (is_focused) .{ 0.5, 0.78, 1.0, 1.0 } else .{ 0.31, 0.31, 0.31, 1.0 };
+            c.wlr_scene_rect_set_color(t.focus_rect, &fcolor);
+            c.wlr_scene_rect_set_size(t.focus_rect, t.fw + 4, t.fh + 4);
+            _ = c.wlr_scene_node_set_position(&t.focus_rect.node, t.fx - vx - 2, t.fy - 2);
         }
     }
 };
@@ -542,6 +573,10 @@ fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
                 server.activeLayout().toggleMaximizeColumn();
                 server.applyLayout();
                 return;
+            } else if (sym == c.XKB_KEY_v) {
+                // Mod+V: 浮動/タイル切替 (SPEC §4.2)
+                if (server.focused) |t| toggleFloating(t);
+                return;
             }
         }
     }
@@ -562,6 +597,29 @@ fn digitFromSym(sym: u32) ?u8 {
         c.XKB_KEY_9 => 9,
         else => null,
     };
+}
+
+fn toggleFloating(t: *Toplevel) void {
+    if (!t.floating) {
+        // タイル → 浮動: 現在の box を初期位置・サイズにする
+        server.workspaces[t.ws].removeWindow(t);
+        const size = layoutSize();
+        const vx: i32 = @intFromFloat(server.viewport_x);
+        t.floating = true;
+        if (t.fw == 0 or t.fh == 0) {
+            t.fw = @divTrunc(size.w * 2, 3);
+            t.fh = @divTrunc(size.h * 2, 3);
+        }
+        t.fx = vx + @divTrunc(size.w - t.fw, 2);
+        t.fy = @divTrunc(size.h - t.fh, 2);
+        _ = c.wlr_xdg_toplevel_set_size(t.xdg_toplevel, t.fw, t.fh);
+    } else {
+        // 浮動 → タイル: アクティブワークスペースのフォーカス列の隣へ
+        t.floating = false;
+        t.ws = server.active_ws;
+        server.activeLayout().addWindow(t) catch {};
+    }
+    server.applyLayout();
 }
 
 fn switchWorkspace(n: usize) void {
@@ -828,6 +886,22 @@ fn handleCursorMotionAbsolute(listener: [*c]c.wl_listener, data: ?*anyopaque) ca
 }
 
 fn processPointerMotion(time_msec: u32) void {
+    // ドラッグ中: 浮動窓の移動/リサイズ
+    if (server.cursor_mode != .passthrough) {
+        if (server.grabbed) |t| {
+            const vx: i32 = @intFromFloat(server.viewport_x);
+            if (server.cursor_mode == .move) {
+                t.fx = @as(i32, @intFromFloat(server.cursor.x)) + server.grab_x - vx;
+                t.fy = @as(i32, @intFromFloat(server.cursor.y)) + server.grab_y;
+            } else {
+                t.fw = @max(@as(i32, @intFromFloat(server.cursor.x)) - t.fx + vx, 100);
+                t.fh = @max(@as(i32, @intFromFloat(server.cursor.y)) - t.fy, 100);
+                _ = c.wlr_xdg_toplevel_set_size(t.xdg_toplevel, t.fw, t.fh);
+            }
+            server.applyLayout();
+        }
+        return;
+    }
     var sx: f64 = 0;
     var sy: f64 = 0;
     const node_raw = c.wlr_scene_node_at(&server.scene.tree.node, server.cursor.x, server.cursor.y, &sx, &sy);
@@ -854,34 +928,56 @@ fn processPointerMotion(time_msec: u32) void {
 fn handleCursorButton(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_button_event = @ptrCast(@alignCast(data.?));
+
     if (event.state == c.WL_POINTER_BUTTON_STATE_PRESSED) {
-        // クリックフォーカス (SPEC §5: niri 慣習)。バッファノードの親ツリーに
-        // Toplevel を入れているので node_at から解決できる
-        var sx: f64 = 0;
-        var sy: f64 = 0;
-        const node_raw = c.wlr_scene_node_at(&server.scene.tree.node, server.cursor.x, server.cursor.y, &sx, &sy);
-        if (node_raw != null) {
-            const node: *c.wlr_scene_node = @ptrCast(node_raw);
-            if (node.type == c.WLR_SCENE_NODE_BUFFER) {
-                const buf: *c.wlr_scene_buffer = @ptrCast(node);
-                if (c.wlr_scene_surface_try_from_buffer(buf) != null) {
-                    // バッファの直接の親は xdg surface 用のサブツリーで、data は
-                    // その祖先の toplevel ツリーに置いてある。親を遡って探す
-                    // (0.19 で node.parent は wlr_scene_tree*)
-                    var cur: [*c]c.wlr_scene_tree = node.parent;
-                    while (cur != null) {
-                        const tree: *c.wlr_scene_tree = @ptrCast(cur);
-                        if (tree.node.data) |d| {
-                            focusToplevel(@ptrCast(@alignCast(d)));
-                            break;
-                        }
-                        cur = tree.node.parent;
-                    }
-                }
+        // Mod+ボタンで浮動窓の移動/リサイズを開始 (SPEC §5)
+        const mods = c.wlr_keyboard_get_modifiers(c.wlr_seat_get_keyboard(server.seat));
+        const target = toplevelAtCursor();
+        if ((mods & MODIFIER) != 0 and target != null and target.?.floating) {
+            const t = target.?;
+            const vx: i32 = @intFromFloat(server.viewport_x);
+            server.grabbed = t;
+            if (event.button == c.BTN_LEFT) {
+                server.cursor_mode = .move;
+                server.grab_x = @floatFromInt(t.fx - vx - @as(i32, @intFromFloat(server.cursor.x)));
+                server.grab_y = @floatFromInt(t.fy - @as(i32, @intFromFloat(server.cursor.y)));
+            } else if (event.button == c.BTN_RIGHT) {
+                server.cursor_mode = .resize;
+                server.grab_w = t.fw;
+                server.grab_h = t.fh;
             }
+            focusToplevel(t);
+            return;
+        }
+        // 通常クリック: フォーカス
+        if (target) |t| focusToplevel(t);
+    } else {
+        // ボタン解放でドラッグ終了
+        if (server.cursor_mode != .passthrough) {
+            server.cursor_mode = .passthrough;
+            server.grabbed = null;
         }
     }
     _ = c.wlr_seat_pointer_notify_button(server.seat, event.time_msec, event.button, event.state);
+}
+
+/// カーソル位置にある Toplevel を scene 経由で探す
+fn toplevelAtCursor() ?*Toplevel {
+    var sx: f64 = 0;
+    var sy: f64 = 0;
+    const node_raw = c.wlr_scene_node_at(&server.scene.tree.node, server.cursor.x, server.cursor.y, &sx, &sy);
+    if (node_raw == null) return null;
+    const node: *c.wlr_scene_node = @ptrCast(node_raw);
+    if (node.type != c.WLR_SCENE_NODE_BUFFER) return null;
+    const buf: *c.wlr_scene_buffer = @ptrCast(node);
+    if (c.wlr_scene_surface_try_from_buffer(buf) == null) return null;
+    var cur: [*c]c.wlr_scene_tree = node.parent;
+    while (cur != null) {
+        const tree: *c.wlr_scene_tree = @ptrCast(cur);
+        if (tree.node.data) |d| return @ptrCast(@alignCast(d));
+        cur = tree.node.parent;
+    }
+    return null;
 }
 
 // ---- 終了 ----
