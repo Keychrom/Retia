@@ -89,7 +89,7 @@ const Server = struct {
     allocator: *c.wlr_allocator = undefined,
     scene: *c.wlr_scene = undefined,
     scene_output_layout: *c.wlr_scene_output_layout = undefined,
-    layout: *c.wlr_output_layout = undefined,
+    output_layout: *c.wlr_output_layout = undefined,
     cursor: *c.wlr_cursor = undefined,
     seat: *c.wlr_seat = undefined,
     xdg_shell: *c.wlr_xdg_shell = undefined,
@@ -152,9 +152,9 @@ pub fn main() !void {
     _ = c.wlr_subcompositor_create(server.display);
     _ = c.wlr_data_device_manager_create(server.display);
 
-    server.layout = c.wlr_output_layout_create(server.display) orelse return error.OutputLayoutCreateFailed;
+    server.output_layout = c.wlr_output_layout_create(server.display) orelse return error.OutputLayoutCreateFailed;
     server.scene = c.wlr_scene_create() orelse return error.SceneCreateFailed;
-    server.scene_output_layout = c.wlr_scene_attach_output_layout(server.scene, server.layout) orelse return error.SceneAttachFailed;
+    server.scene_output_layout = c.wlr_scene_attach_output_layout(server.scene, server.output_layout) orelse return error.SceneAttachFailed;
 
     server.xdg_shell = c.wlr_xdg_shell_create(server.display, 6) orelse return error.XdgShellCreateFailed;
 
@@ -230,7 +230,7 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
     c.wl_signal_add(&wlr_output.events.destroy, &output.destroy);
 
     // scene_output は自動では作られない: 作成して layout のエントリに紐付ける
-    const lo = c.wlr_output_layout_add_auto(server.layout, wlr_output);
+    const lo = c.wlr_output_layout_add_auto(server.output_layout, wlr_output);
     const so = c.wlr_scene_output_create(server.scene, wlr_output) orelse {
         logErr("failed to create scene output", .{});
         return;
@@ -564,7 +564,7 @@ fn focusToplevel(toplevel: *Toplevel) void {
 fn layoutSize() struct { w: i32, h: i32 } {
     // 0.19 から get_box は呼び出し側の box に書き込む方式
     var box: c.wlr_box = std.mem.zeroes(c.wlr_box);
-    c.wlr_output_layout_get_box(server.layout, null, &box);
+    c.wlr_output_layout_get_box(server.output_layout, null, &box);
     if (box.width > 0 and box.height > 0) {
         return .{ .w = box.width, .h = box.height };
     }
