@@ -51,14 +51,12 @@ fn logErr(comptime fmt: []const u8, args: anytype) void {
 }
 
 const Toplevel = struct {
-    xdg_surface: *c.wlr_xdg_surface,
-    /// xdg_surface.toplevel は匿名 union で cimport から直接触れないため、
-    /// 生成時に accessor で解決して保持する
     xdg_toplevel: *c.wlr_xdg_toplevel,
     scene_tree: *c.wlr_scene_tree,
 
     map: c.wl_listener,
     unmap: c.wl_listener,
+    commit: c.wl_listener,
     destroy: c.wl_listener,
     request_maximize: c.wl_listener,
     request_fullscreen: c.wl_listener,
@@ -96,7 +94,7 @@ const Server = struct {
 
     new_output: c.wl_listener = undefined,
     new_input: c.wl_listener = undefined,
-    new_xdg_surface: c.wl_listener = undefined,
+    new_xdg_toplevel: c.wl_listener = undefined,
     cursor_motion: c.wl_listener = undefined,
     cursor_motion_absolute: c.wl_listener = undefined,
     cursor_button: c.wl_listener = undefined,
@@ -149,8 +147,8 @@ pub fn main() !void {
     c.wl_signal_add(&server.backend.events.new_output, &server.new_output);
     server.new_input.notify = handleNewInput;
     c.wl_signal_add(&server.backend.events.new_input, &server.new_input);
-    server.new_xdg_surface.notify = handleNewXdgSurface;
-    c.wl_signal_add(&server.xdg_shell.events.new_surface, &server.new_xdg_surface);
+    server.new_xdg_toplevel.notify = handleNewXdgToplevel;
+    c.wl_signal_add(&server.xdg_shell.events.new_toplevel, &server.new_xdg_toplevel);
     server.cursor_motion.notify = handleCursorMotion;
     c.wl_signal_add(&server.cursor.events.motion, &server.cursor_motion);
     server.cursor_motion_absolute.notify = handleCursorMotionAbsolute;
@@ -357,56 +355,61 @@ fn spawnTerminal() void {
 
 // ---- XDG シェル (窓) ----
 
-fn handleNewXdgSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
-    const xdg_surface: *c.wlr_xdg_surface = @ptrCast(@alignCast(data.?));
-    if (xdg_surface.role != c.WLR_XDG_SURFACE_ROLE_TOPLEVEL) return;
-    logInfo("new xdg surface (toplevel)", .{});
-    // 匿名 union (xdg_surface.toplevel) は cimport から直接触れないため accessor を使う
-    const toplevel_handle: *c.wlr_xdg_toplevel = @ptrCast(c.wlr_xdg_toplevel_try_from_wlr_surface(xdg_surface.surface) orelse return);
+    // 0.19: new_surface は廃止。new_toplevel (data = wlr_xdg_toplevel) を使う
+    const xdg_toplevel: *c.wlr_xdg_toplevel = @ptrCast(@alignCast(data.?));
 
     const toplevel = server.gpa.create(Toplevel) catch return;
     toplevel.* = .{
-        .xdg_surface = xdg_surface,
-        .xdg_toplevel = toplevel_handle,
-        // scene ノードは map 前に作れる。unmap 中は自動で隠れる
-        .scene_tree = c.wlr_scene_xdg_surface_create(&server.scene.tree, xdg_surface) orelse {
+        .xdg_toplevel = xdg_toplevel,
+        .scene_tree = c.wlr_scene_xdg_surface_create(&server.scene.tree, xdg_toplevel.base) orelse {
             server.gpa.destroy(toplevel);
             return;
         },
         .map = undefined,
         .unmap = undefined,
+        .commit = undefined,
         .destroy = undefined,
         .request_maximize = undefined,
         .request_fullscreen = undefined,
     };
+    toplevel.scene_tree.node.data = toplevel;
+    // popup の親解決用 (M2 で popup を扱うときに使う)
+    xdg_toplevel.base.data = toplevel.scene_tree;
 
-    // surface は [*c] なので field access 前に単一ポインタへ
-    const wlr_surface: *c.wlr_surface = @ptrCast(xdg_surface.surface);
     toplevel.map.notify = handleToplevelMap;
-    c.wl_signal_add(&wlr_surface.events.map, &toplevel.map);
+    c.wl_signal_add(&xdg_toplevel.base.surface.events.map, &toplevel.map);
     toplevel.unmap.notify = handleToplevelUnmap;
-    c.wl_signal_add(&wlr_surface.events.unmap, &toplevel.unmap);
+    c.wl_signal_add(&xdg_toplevel.base.surface.events.unmap, &toplevel.unmap);
+    toplevel.commit.notify = handleToplevelCommit;
+    c.wl_signal_add(&xdg_toplevel.base.surface.events.commit, &toplevel.commit);
     toplevel.destroy.notify = handleToplevelDestroy;
-    c.wl_signal_add(&xdg_surface.events.destroy, &toplevel.destroy);
+    c.wl_signal_add(&xdg_toplevel.events.destroy, &toplevel.destroy);
     toplevel.request_maximize.notify = handleToplevelRequestMaximize;
-    c.wl_signal_add(&toplevel_handle.events.request_maximize, &toplevel.request_maximize);
+    c.wl_signal_add(&xdg_toplevel.events.request_maximize, &toplevel.request_maximize);
     toplevel.request_fullscreen.notify = handleToplevelRequestFullscreen;
-    c.wl_signal_add(&toplevel_handle.events.request_fullscreen, &toplevel.request_fullscreen);
+    c.wl_signal_add(&xdg_toplevel.events.request_fullscreen, &toplevel.request_fullscreen);
+    logInfo("new toplevel", .{});
 }
 
 fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
     const toplevel: *Toplevel = @fieldParentPtr("map", @as(*c.wl_listener, @ptrCast(listener)));
     logInfo("toplevel mapped: {s}", .{outputName_toplevel(toplevel)});
-
-    // M1 レイアウト: レイアウト全面 (M2 でスクロール列に置き換え)
-    const size = layoutSize();
-    _ = c.wlr_scene_node_set_position(&toplevel.scene_tree.node, 0, 0);
-    _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
-    _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_surface);
-
     focusToplevel(toplevel);
+}
+
+fn handleToplevelCommit(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
+    const toplevel: *Toplevel = @fieldParentPtr("commit", @as(*c.wl_listener, @ptrCast(listener)));
+    // 0.19: initial commit にはコンポジタが configure で応答する義務がある。
+    // これがないとクライアントは map せず待ち続ける (kitty が止まった原因)
+    if (toplevel.xdg_toplevel.base.initial_commit) {
+        // M1 レイアウト: レイアウト全面 (M2 でスクロール列に置き換え)
+        const size = layoutSize();
+        _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
+    }
 }
 
 fn handleToplevelUnmap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
@@ -435,7 +438,7 @@ fn handleToplevelRequestMaximize(listener: [*c]c.wl_listener, data: ?*anyopaque)
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_maximized(toplevel.xdg_toplevel, true);
-    _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_surface);
+    _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_toplevel.base);
 }
 
 fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
@@ -444,7 +447,7 @@ fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaqu
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_fullscreen(toplevel.xdg_toplevel, true);
-    _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_surface);
+    _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_toplevel.base);
 }
 
 fn focusToplevel(toplevel: *Toplevel) void {
@@ -455,7 +458,7 @@ fn focusToplevel(toplevel: *Toplevel) void {
     }
     server.focused = toplevel;
     _ = c.wlr_xdg_toplevel_set_activated(toplevel.xdg_toplevel, true);
-    _ = c.wlr_seat_keyboard_notify_enter(server.seat, toplevel.xdg_surface.surface, null, 0, null);
+    _ = c.wlr_seat_keyboard_notify_enter(server.seat, toplevel.xdg_toplevel.base.surface, null, 0, null);
 }
 
 fn layoutSize() struct { w: i32, h: i32 } {
