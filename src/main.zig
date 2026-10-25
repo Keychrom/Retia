@@ -682,8 +682,9 @@ fn handleNewXdgPopup(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
     const popup_base: *c.wlr_xdg_surface = @ptrCast(xdg_popup.base);
     popup_base.data = c.wlr_scene_xdg_surface_create(parent_tree, popup_base);
 
+    const popup_surface: *c.wlr_surface = @ptrCast(popup_base.surface);
     popup.commit.notify = handlePopupCommit;
-    c.wl_signal_add(&popup_base.surface.events.commit, &popup.commit);
+    c.wl_signal_add(&popup_surface.events.commit, &popup.commit);
     popup.destroy.notify = handlePopupDestroy;
     c.wl_signal_add(&xdg_popup.events.destroy, &popup.destroy);
     logInfo("new popup", .{});
