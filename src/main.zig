@@ -192,7 +192,7 @@ const Server = struct {
         for (self.toplevels.items) |t| {
             const visible = t.ws == self.active_ws;
             _ = c.wlr_scene_node_set_enabled(&t.scene_tree.node, visible);
-            _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, visible);
+            _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, false);
         }
 
         const boxes = l.windowBoxes(self.gpa) catch return;
@@ -214,24 +214,16 @@ const Server = struct {
             if (t.base.initial_commit) {
                 _ = c.wlr_xdg_toplevel_set_size(t.xdg_toplevel, box.w, box.h);
             }
-            // フォーカスリング: フォーカス窓はアクセント色
-            const is_focused = self.focused == t;
-            const color: [4]f32 = if (is_focused) .{ 0.5, 0.78, 1.0, 1.0 } else .{ 0.31, 0.31, 0.31, 1.0 };
-            c.wlr_scene_rect_set_color(t.focus_rect, &color);
-            c.wlr_scene_rect_set_size(t.focus_rect, box.w + 4, box.h + 4);
-            _ = c.wlr_scene_node_set_position(&t.focus_rect.node, box.x - vx - 2, box.y - 2);
+            // デバッグ中: リング更新停止
+            _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, false);
         }
 
-        // 浮動窓 (レイアウト外): 固定位置・サイズ、リングも自分のサイズで
+        // 浮動窓 (レイアウト外)
         for (self.toplevels.items) |t| {
             if (!t.floating or t.ws != self.active_ws or t.fullscreen) continue;
             _ = c.wlr_scene_node_set_enabled(&t.scene_tree.node, true);
             _ = c.wlr_scene_node_set_position(&t.scene_tree.node, t.fx - vx, t.fy);
-            const is_focused = self.focused == t;
-            const fcolor: [4]f32 = if (is_focused) .{ 0.5, 0.78, 1.0, 1.0 } else .{ 0.31, 0.31, 0.31, 1.0 };
-            c.wlr_scene_rect_set_color(t.focus_rect, &fcolor);
-            c.wlr_scene_rect_set_size(t.focus_rect, t.fw + 4, t.fh + 4);
-            _ = c.wlr_scene_node_set_position(&t.focus_rect.node, t.fx - vx - 2, t.fy - 2);
+            _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, false);
         }
     }
 };
@@ -840,17 +832,17 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     // popup の親解決用 (M2 で popup を扱うときに使う)
     base.data = toplevel.scene_tree;
 
-    // フォーカスリング: 窓の背面に置く色付き矩形
+    // デバッグ中: フォーカスリングは全面停止 (描画問題の切り分け)
     const dim: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 };
     toplevel.focus_rect = c.wlr_scene_rect_create(&server.scene.tree, 10, 10, &dim) orelse {
         server.gpa.destroy(toplevel);
         return;
     };
     c.wlr_scene_node_set_enabled(&toplevel.focus_rect.node, false);
-    c.wlr_scene_node_place_below(&toplevel.focus_rect.node, &toplevel.scene_tree.node);
     // 窓とリングは上層レイヤーの下に保つ。注意: ring を layers_top の下へ
     // 追加で move すると窓の上に回ってしまう (リングが窓を隠す事故の原因)
-    c.wlr_scene_node_place_below(&toplevel.scene_tree.node, &server.layers_top_tree.node);
+    // デバッグ中: 順序変更も停止
+    // c.wlr_scene_node_place_below(&toplevel.scene_tree.node, &server.layers_top_tree.node);
 
     const surface: *c.wlr_surface = @ptrCast(base.surface);
     toplevel.map.notify = handleToplevelMap;
