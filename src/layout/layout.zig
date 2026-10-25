@@ -122,11 +122,13 @@ pub fn Layout(comptime Window: type) type {
         // ---- フォーカス移動 ----
 
         pub fn focusColumnLeft(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             self.focused_column -|= 1;
             self.focused_window = 0;
         }
 
         pub fn focusColumnRight(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             if (self.focused_column + 1 < self.columns.items.len) {
                 self.focused_column += 1;
             }
@@ -134,10 +136,12 @@ pub fn Layout(comptime Window: type) type {
         }
 
         pub fn focusWindowUp(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             self.focused_window -|= 1;
         }
 
         pub fn focusWindowDown(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             const col = self.focusedColumnPtr();
             if (self.focused_window + 1 < col.windows.items.len) {
                 self.focused_window += 1;
@@ -145,11 +149,13 @@ pub fn Layout(comptime Window: type) type {
         }
 
         pub fn focusColumnFirst(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             self.focused_column = 0;
             self.focused_window = 0;
         }
 
         pub fn focusColumnLast(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             self.focused_column = self.columns.items.len -| 1;
             self.focused_window = 0;
         }
@@ -157,18 +163,21 @@ pub fn Layout(comptime Window: type) type {
         // ---- 移動 ----
 
         pub fn moveColumnLeft(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             if (self.focused_column == 0) return;
             std.mem.swap(Column, &self.columns.items[self.focused_column], &self.columns.items[self.focused_column - 1]);
             self.focused_column -= 1;
         }
 
         pub fn moveColumnRight(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             if (self.focused_column + 1 >= self.columns.items.len) return;
             std.mem.swap(Column, &self.columns.items[self.focused_column], &self.columns.items[self.focused_column + 1]);
             self.focused_column += 1;
         }
 
         pub fn moveWindowUp(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             if (self.focused_window == 0) return;
             const col = self.focusedColumnPtr();
             std.mem.swap(Window, &col.windows.items[self.focused_window], &col.windows.items[self.focused_window - 1]);
@@ -176,6 +185,7 @@ pub fn Layout(comptime Window: type) type {
         }
 
         pub fn moveWindowDown(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             const col = self.focusedColumnPtr();
             if (self.focused_window + 1 >= col.windows.items.len) return;
             std.mem.swap(Window, &col.windows.items[self.focused_window], &col.windows.items[self.focused_window + 1]);
@@ -187,6 +197,7 @@ pub fn Layout(comptime Window: type) type {
         /// 左方向: 左列が無ければ窓を切り出して左に新列 (expel)。
         /// 左列が 1 窓なら列ごと吸収、複数ならその末尾の窓を取り込む (consume)。
         pub fn consumeOrExpelLeft(self: *Self) !void {
+            if (self.columns.items.len == 0) return;
             if (self.focused_column == 0) {
                 // expel: フォーカス列が 2 窓以上のとき、フォーカス窓を左へ新列として切り出す
                 const col = self.focusedColumnPtr();
@@ -218,6 +229,7 @@ pub fn Layout(comptime Window: type) type {
 
         /// 右方向 (consumeOrExpelLeft の鏡像)。
         pub fn consumeOrExpelRight(self: *Self) !void {
+            if (self.columns.items.len == 0) return;
             if (self.focused_column + 1 >= self.columns.items.len) {
                 const col = self.focusedColumnPtr();
                 if (col.windows.items.len < 2) return;
@@ -246,6 +258,7 @@ pub fn Layout(comptime Window: type) type {
 
         /// フォーカス列の幅をプリセットでサイクル (1/3 → 1/2 → 2/3 → 1/3)
         pub fn cycleColumnWidth(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             const col = self.focusedColumnPtr();
             const current = col.width_ratio;
             var next = width_presets[0];
@@ -260,6 +273,7 @@ pub fn Layout(comptime Window: type) type {
 
         /// フォーカス列の最大化トグル (全面 ↔ 直前の比率)
         pub fn toggleMaximizeColumn(self: *Self) void {
+            if (self.columns.items.len == 0) return;
             const col = self.focusedColumnPtr();
             if (col.width_ratio >= 0.999) {
                 col.width_ratio = if (col.prev_ratio > 0) col.prev_ratio else 0.5;
@@ -497,6 +511,28 @@ test "geometry: 単窓は gap を除いて全面" {
     try testing.expectEqual(l.gap, boxes[0].y);
     try testing.expectEqual(@as(i32, 1280 - 16), boxes[0].w);
     try testing.expectEqual(@as(i32, 720 - 16), boxes[0].h);
+    try testing.expectEqual(@as(i32, 0), l.viewportTargetX());
+}
+
+test "空レイアウトで全操作が安全に no-op になる" {
+    const a = testing.allocator;
+    var l = Layout(*TestWindow).init(a);
+    defer l.deinit();
+
+    l.focusColumnLeft();
+    l.focusColumnRight();
+    l.focusWindowUp();
+    l.focusWindowDown();
+    l.focusColumnFirst();
+    l.focusColumnLast();
+    l.moveColumnLeft();
+    l.moveColumnRight();
+    l.moveWindowUp();
+    l.moveWindowDown();
+    try l.consumeOrExpelLeft();
+    try l.consumeOrExpelRight();
+    l.cycleColumnWidth();
+    l.toggleMaximizeColumn();
     try testing.expectEqual(@as(i32, 0), l.viewportTargetX());
 }
 
