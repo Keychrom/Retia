@@ -206,24 +206,25 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
     c.wl_signal_add(&wlr_output.events.destroy, &output.destroy);
 
     _ = c.wlr_output_layout_add_auto(server.layout, wlr_output);
-    logInfo("output added: {s}", .{outputName(wlr_output)});
+    const so = c.wlr_scene_get_scene_output(server.scene, wlr_output);
+    logInfo("output added: {s} scene_output={s}", .{ outputName(wlr_output), if (so != null) "yes" else "NULL" });
 }
 
 fn handleOutputFrame(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
     const output: *Output = @fieldParentPtr("frame", @as(*c.wl_listener, @ptrCast(listener)));
     const scene_output = c.wlr_scene_get_scene_output(server.scene, output.wlr_output);
-    if (scene_output != null) {
+    if (scene_output) |so| {
         // scene graph の内容を output に commit する。
         // 注意: ここで wlr_output_schedule_frame を呼ぶと frame イベントが即座に
         // 再発火して暴走+毎フレームバッファリーク (OOM した)。tinywl も schedule
         // しない — scene が damage を検知したときだけ自動で回る
-        _ = c.wlr_scene_output_commit(scene_output, null);
+        _ = c.wlr_scene_output_commit(so, null);
+        // クライアント (kitty 等) にフレーム完了を通知しないと描画が止まる
+        var now: c.struct_timespec = undefined;
+        _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
+        c.wlr_scene_output_send_frame_done(so, &now);
     }
-    // クライアント (kitty 等) にフレーム完了を通知しないと描画が止まる
-    var now: c.struct_timespec = undefined;
-    _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
-    c.wlr_scene_output_send_frame_done(scene_output, &now);
 }
 
 fn handleOutputDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
