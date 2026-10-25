@@ -69,7 +69,7 @@ pub fn Layout(comptime Window: type) type {
 
         /// 新規窓: フォーカス列の隣に新しい列として開く (niri 互換【決定】)。
         /// レイアウトが空のときは全面幅 (M1 からの見た目を維持)、 otherwise 0.5
-        pub fn addWindow(self: *Self, window: *Window) !void {
+        pub fn addWindow(self: *Self, window: Window) !void {
             const ratio: f32 = if (self.columns.items.len == 0) 1.0 else 0.5;
             var col = Column{ .width_ratio = ratio };
             try col.windows.append(self.allocator, window);
