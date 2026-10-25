@@ -169,9 +169,19 @@ pub fn main() !void {
 
     server.cursor = c.wlr_cursor_create() orelse return error.CursorCreateFailed;
     _ = c.wlr_cursor_attach_output_layout(server.cursor, server.output_layout);
-    // カーソル画像 (無いとポインタが不可視になる)
+    // カーソル画像 (無いとポインタが不可視になる)。"default" テーマは中身が
+    // 継承のみの場合があるので、ロード失敗時は Adwaita にフォールバックする
     server.xcursor_manager = c.wlr_xcursor_manager_create(null, 24) orelse return error.XcursorCreateFailed;
-    _ = c.wlr_xcursor_manager_load(server.xcursor_manager, 1.0);
+    if (!c.wlr_xcursor_manager_load(server.xcursor_manager, 1.0) or
+        c.wlr_xcursor_manager_get_xcursor(server.xcursor_manager, "default", 1.0) == null)
+    {
+        logErr("cursor theme 'default' unavailable — falling back to Adwaita", .{});
+        c.wlr_xcursor_manager_destroy(server.xcursor_manager);
+        server.xcursor_manager = c.wlr_xcursor_manager_create("Adwaita", 24) orelse return error.XcursorCreateFailed;
+        if (!c.wlr_xcursor_manager_load(server.xcursor_manager, 1.0)) {
+            logErr("Adwaita cursor load failed too", .{});
+        }
+    }
     c.wlr_cursor_set_xcursor(server.cursor, server.xcursor_manager, "default");
 
     server.seat = c.wlr_seat_create(server.display, "seat0") orelse return error.SeatCreateFailed;
