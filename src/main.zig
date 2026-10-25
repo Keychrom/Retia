@@ -58,16 +58,16 @@ const Keyboard = struct {
 
 const Server = struct {
     gpa: std.mem.Allocator,
-    display: *c.wl_display,
-    backend: *c.wlr_backend,
-    renderer: *c.wlr_renderer,
-    allocator: *c.wlr_allocator,
-    scene: *c.wlr_scene,
-    layout: *c.wlr_output_layout,
-    cursor: *c.wlr_cursor,
-    seat: *c.wlr_seat,
-    xdg_shell: *c.wlr_xdg_shell,
-    socket_name: [:0]const u8,
+    display: *c.wl_display = undefined,
+    backend: *c.wlr_backend = undefined,
+    renderer: *c.wlr_renderer = undefined,
+    allocator: *c.wlr_allocator = undefined,
+    scene: *c.wlr_scene = undefined,
+    layout: *c.wlr_output_layout = undefined,
+    cursor: *c.wlr_cursor = undefined,
+    seat: *c.wlr_seat = undefined,
+    xdg_shell: *c.wlr_xdg_shell = undefined,
+    socket_name: [:0]const u8 = undefined,
 
     focused: ?*Toplevel = null,
 
