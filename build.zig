@@ -1,5 +1,20 @@
 const std = @import("std");
 
+/// pkg-config の --libs を module に反映する。
+/// zig(lld) は共有ライブラリの DT_NEEDED を transitive 解決しないため、
+/// main から直接参照する libwayland-server / libxkbcommon も明示的にリンクする
+fn linkPkg(b: *std.Build, module: *std.Build.Module, name: []const u8) void {
+    const libs = b.run(&.{ "pkg-config", "--libs", name });
+    var it = std.mem.tokenizeAny(u8, libs, " \t\r\n");
+    while (it.next()) |flag| {
+        if (std.mem.startsWith(u8, flag, "-l")) {
+            module.linkSystemLibrary(flag[2..], .{});
+        } else if (std.mem.startsWith(u8, flag, "-L")) {
+            module.addLibraryPath(.{ .cwd_relative = flag[2..] });
+        }
+    }
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -40,6 +55,8 @@ pub fn build(b: *std.Build) void {
             exe.root_module.addLibraryPath(.{ .cwd_relative = flag[2..] });
         }
     }
+    linkPkg(b, exe.root_module, "wayland-server");
+    linkPkg(b, exe.root_module, "xkbcommon");
 
     // wlroots のヘッダは WLR_USE_UNSTABLE なしでは include できない
     exe.root_module.addCMacro("WLR_USE_UNSTABLE", "1");
