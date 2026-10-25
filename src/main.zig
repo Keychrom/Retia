@@ -572,6 +572,8 @@ fn handleToplevelDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callcon
     c.wl_list_remove(&toplevel.destroy.link);
     c.wl_list_remove(&toplevel.request_maximize.link);
     c.wl_list_remove(&toplevel.request_fullscreen.link);
+    // フォーカスリングの矩形も破棄しないと画面に残る
+    c.wlr_scene_node_destroy(&toplevel.focus_rect.node);
     if (server.focused == toplevel) server.focused = null;
     server.layout.removeWindow(toplevel);
     server.applyLayout();
