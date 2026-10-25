@@ -1,5 +1,7 @@
 # Retia
 
+**English** | [日本語](README.ja.md)
+
 **A scrollable-tiling Wayland compositor with an integrated shell, written in Zig.**
 
 Retia pairs the scrollable-column tiling grammar popularized by [niri](https://github.com/YaLTeR/niri) with the piece niri deliberately leaves out: a built-in desktop shell. Taskbar, start menu, session-persistent layouts — designed together with the compositor, in one codebase, as isolated processes.
