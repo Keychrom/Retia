@@ -382,12 +382,13 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     // popup の親解決用 (M2 で popup を扱うときに使う)
     base.data = toplevel.scene_tree;
 
+    const surface: *c.wlr_surface = @ptrCast(base.surface);
     toplevel.map.notify = handleToplevelMap;
-    c.wl_signal_add(&base.surface.events.map, &toplevel.map);
+    c.wl_signal_add(&surface.events.map, &toplevel.map);
     toplevel.unmap.notify = handleToplevelUnmap;
-    c.wl_signal_add(&base.surface.events.unmap, &toplevel.unmap);
+    c.wl_signal_add(&surface.events.unmap, &toplevel.unmap);
     toplevel.commit.notify = handleToplevelCommit;
-    c.wl_signal_add(&base.surface.events.commit, &toplevel.commit);
+    c.wl_signal_add(&surface.events.commit, &toplevel.commit);
     toplevel.destroy.notify = handleToplevelDestroy;
     c.wl_signal_add(&xdg_toplevel.events.destroy, &toplevel.destroy);
     toplevel.request_maximize.notify = handleToplevelRequestMaximize;
@@ -462,7 +463,8 @@ fn focusToplevel(toplevel: *Toplevel) void {
     }
     server.focused = toplevel;
     _ = c.wlr_xdg_toplevel_set_activated(toplevel.xdg_toplevel, true);
-    _ = c.wlr_seat_keyboard_notify_enter(server.seat, toplevel.base.surface, null, 0, null);
+    const surface: *c.wlr_surface = @ptrCast(toplevel.base.surface);
+    _ = c.wlr_seat_keyboard_notify_enter(server.seat, surface, null, 0, null);
 }
 
 fn layoutSize() struct { w: i32, h: i32 } {
