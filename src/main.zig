@@ -99,7 +99,7 @@ pub fn main() !void {
     _ = c.wlr_subcompositor_create(server.display);
     _ = c.wlr_data_device_manager_create(server.display);
 
-    server.layout = c.wlr_output_layout_create() orelse return error.OutputLayoutCreateFailed;
+    server.layout = c.wlr_output_layout_create(server.display) orelse return error.OutputLayoutCreateFailed;
     server.scene = c.wlr_scene_create() orelse return error.SceneCreateFailed;
     _ = c.wlr_scene_attach_output_layout(server.scene, server.layout);
 
