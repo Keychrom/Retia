@@ -60,6 +60,9 @@ const Toplevel = struct {
     scene_tree: *c.wlr_scene_tree,
     /// フォーカス表示用の枠 (窓の背面に置く)
     focus_rect: *c.wlr_scene_rect,
+    /// 所属ワークスペース (0 始点)
+    ws: usize,
+    fullscreen: bool = false,
 
     map: c.wl_listener,
     unmap: c.wl_listener,
@@ -68,6 +71,14 @@ const Toplevel = struct {
     request_maximize: c.wl_listener,
     request_fullscreen: c.wl_listener,
 };
+
+const Popup = struct {
+    xdg_popup: *c.wlr_xdg_popup,
+    commit: c.wl_listener,
+    destroy: c.wl_listener,
+};
+
+const WORKSPACE_COUNT = 9;
 
 const SceneLayout = layout_mod.Layout(*Toplevel);
 
@@ -99,15 +110,31 @@ const Server = struct {
     xdg_shell: *c.wlr_xdg_shell = undefined,
     socket_name: [:0]const u8 = undefined,
     nested: bool = false,
-    layout: SceneLayout = undefined,
+    /// 出力ごとにワークスペース群を持つ設計 (SPEC §3.2)。現状は単一出力前提で
+    /// Server 直に 9 枚。マルチ出力は M3 で出力への割当に変える
+    workspaces: [WORKSPACE_COUNT]SceneLayout = undefined,
+    active_ws: usize = 0,
+    toplevels: std.ArrayList(*Toplevel) = .empty,
     viewport_x: f64 = 0,
     outputs: std.ArrayList(*Output) = .empty,
+
+    fn activeLayout(self: *Server) *SceneLayout {
+        return &self.workspaces[self.active_ws];
+    }
+
+    /// アクティブなワークスペースの列数・窓数のログ用
+    fn layoutSummary(self: *Server) struct { cols: usize, wins: usize } {
+        var wins: usize = 0;
+        for (self.activeLayout().columns.items) |*col| wins += col.windows.items.len;
+        return .{ .cols = self.activeLayout().columns.items.len, .wins = wins };
+    }
 
     focused: ?*Toplevel = null,
 
     new_output: c.wl_listener = undefined,
     new_input: c.wl_listener = undefined,
     new_xdg_toplevel: c.wl_listener = undefined,
+    new_xdg_popup: c.wl_listener = undefined,
     cursor_motion: c.wl_listener = undefined,
     cursor_motion_absolute: c.wl_listener = undefined,
     cursor_button: c.wl_listener = undefined,
@@ -115,19 +142,37 @@ const Server = struct {
     /// レイアウトエンジンの状態を scene node に反映する (呼び出し頻度高・軽量)
     pub fn applyLayout(self: *Server) void {
         const size = layoutSize();
-        self.layout.setUsableSize(size.w, size.h);
-        const boxes = self.layout.windowBoxes(self.gpa) catch return;
+        for (&self.workspaces) |*ws| ws.setUsableSize(size.w, size.h);
+        const l = self.activeLayout();
+
+        // 非アクティブワークスペースの窓とリングを隠す
+        for (self.toplevels.items) |t| {
+            const visible = t.ws == self.active_ws;
+            _ = c.wlr_scene_node_set_enabled(&t.scene_tree.node, visible);
+            _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, visible);
+        }
+
+        const boxes = l.windowBoxes(self.gpa) catch return;
         defer self.gpa.free(boxes);
         const vx: i32 = @intFromFloat(self.viewport_x);
         for (boxes) |box| {
             const t: *Toplevel = box.window;
+            _ = c.wlr_scene_node_set_enabled(&t.scene_tree.node, true);
+            if (t.fullscreen) {
+                _ = c.wlr_scene_node_set_position(&t.scene_tree.node, 0, 0);
+                _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, false);
+                if (t.base.initial_commit) {
+                    _ = c.wlr_xdg_toplevel_set_size(t.xdg_toplevel, size.w, size.h);
+                }
+                continue;
+            }
             _ = c.wlr_scene_node_set_position(&t.scene_tree.node, box.x - vx, box.y);
             // initial commit 前の surface への schedule_configure は assert 死亡する
             if (t.base.initial_commit) {
                 _ = c.wlr_xdg_toplevel_set_size(t.xdg_toplevel, box.w, box.h);
             }
             // フォーカスリング: フォーカス窓はアクセント色
-            const is_focused = server.focused == t;
+            const is_focused = self.focused == t;
             const color: [4]f32 = if (is_focused) .{ 0.5, 0.78, 1.0, 1.0 } else .{ 0.31, 0.31, 0.31, 1.0 };
             c.wlr_scene_rect_set_color(t.focus_rect, &color);
             c.wlr_scene_rect_set_size(t.focus_rect, box.w + 4, box.h + 4);
@@ -141,7 +186,7 @@ var server: Server = undefined;
 
 pub fn main() !void {
     server = .{ .gpa = std.heap.c_allocator };
-    server.layout = SceneLayout.init(server.gpa);
+    for (&server.workspaces) |*ws| ws.* = SceneLayout.init(server.gpa);
 
     c.wlr_log_init(c.WLR_INFO, null);
 
@@ -205,6 +250,8 @@ pub fn main() !void {
     c.wl_signal_add(&server.backend.events.new_input, &server.new_input);
     server.new_xdg_toplevel.notify = handleNewXdgToplevel;
     c.wl_signal_add(&server.xdg_shell.events.new_toplevel, &server.new_xdg_toplevel);
+    server.new_xdg_popup.notify = handleNewXdgPopup;
+    c.wl_signal_add(&server.xdg_shell.events.new_popup, &server.new_xdg_popup);
     server.cursor_motion.notify = handleCursorMotion;
     c.wl_signal_add(&server.cursor.events.motion, &server.cursor_motion);
     server.cursor_motion_absolute.notify = handleCursorMotionAbsolute;
@@ -276,7 +323,7 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
     var ew: i32 = 0;
     var eh: i32 = 0;
     c.wlr_output_effective_resolution(wlr_output, &ew, &eh);
-    if (ew > 0 and eh > 0) server.layout.setUsableSize(ew, eh);
+    for (&server.workspaces) |*ws| ws.setUsableSize(ew, eh);
     server.outputs.append(server.gpa, output) catch {};
     // VirtualBox (vmwgfx) の HW カーソルが表示されないためソフトウェアカーソルを
     // 強制する。scene commit がカーソルを描画に混ぜてくれる
@@ -303,7 +350,7 @@ fn handleOutputFrame(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
     }
     // viewport スクロールのイージング: 収束するまでフレームを継続要求する
     // (アニメ中だけ schedule — 常時は OOM の教訓どおり NG)
-    const target: f64 = @floatFromInt(server.layout.viewportTargetX());
+    const target: f64 = @floatFromInt(server.activeLayout().viewportTargetX());
     if (@abs(target - server.viewport_x) > 0.5) {
         server.viewport_x += (target - server.viewport_x) * 0.2;
         c.wlr_output_schedule_frame(output.wlr_output);
@@ -399,6 +446,8 @@ fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
         const mods = c.wlr_keyboard_get_modifiers(wlr_kb);
         if ((mods & MODIFIER) != 0) {
             const ctrl = (mods & c.WLR_MODIFIER_CTRL) != 0;
+            const shift = (mods & c.WLR_MODIFIER_SHIFT) != 0;
+            const digit = digitFromSym(sym);
             if (sym == c.XKB_KEY_q) {
                 // Super+Q: フォーカス窓を閉じる
                 if (server.focused) |t| {
@@ -413,43 +462,85 @@ fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
                 // Super+Escape: コンポジタ終了 (nested 開発用の逃げ道)
                 c.wl_display_terminate(server.display);
                 return;
+            } else if (digit != null and ctrl) {
+                // Mod+Ctrl+1..9: フォーカス列をワークスペース N へ移動
+                const n = digit.? - 1;
+                if (server.activeLayout().takeFocusedColumn()) |col| {
+                    for (col.windows.items) |t| t.ws = n;
+                    server.workspaces[n].appendColumn(col) catch {};
+                    logInfo("column moved to ws {d}", .{n + 1});
+                    server.applyLayout();
+                }
+                return;
+            } else if (digit != null) {
+                // Mod+1..9: ワークスペース N へ切替
+                switchWorkspace(digit.? - 1);
+                return;
+            } else if (sym == c.XKB_KEY_u) {
+                // Mod+U: ワークスペース下へ (番号小さい方へ)
+                if (server.active_ws > 0) switchWorkspace(server.active_ws - 1);
+                return;
+            } else if (sym == c.XKB_KEY_i) {
+                // Mod+I: ワークスペース上へ
+                if (server.active_ws + 1 < WORKSPACE_COUNT) switchWorkspace(server.active_ws + 1);
+                return;
             } else if (sym == c.XKB_KEY_h and ctrl) {
-                // Super+Ctrl+H: 列を左へ移動
-                server.layout.moveColumnLeft();
+                server.activeLayout().moveColumnLeft();
                 server.applyLayout();
                 return;
             } else if (sym == c.XKB_KEY_l and ctrl) {
-                server.layout.moveColumnRight();
+                server.activeLayout().moveColumnRight();
+                server.applyLayout();
+                return;
+            } else if (sym == c.XKB_KEY_j and ctrl) {
+                server.activeLayout().moveWindowDown();
+                server.applyLayout();
+                return;
+            } else if (sym == c.XKB_KEY_k and ctrl) {
+                server.activeLayout().moveWindowUp();
                 server.applyLayout();
                 return;
             } else if (sym == c.XKB_KEY_h) {
-                server.layout.focusColumnLeft();
+                server.activeLayout().focusColumnLeft();
                 server.applyLayout();
                 return;
             } else if (sym == c.XKB_KEY_l) {
-                server.layout.focusColumnRight();
+                server.activeLayout().focusColumnRight();
                 server.applyLayout();
                 return;
             } else if (sym == c.XKB_KEY_j) {
-                server.layout.focusWindowDown();
+                server.activeLayout().focusWindowDown();
                 server.applyLayout();
                 return;
             } else if (sym == c.XKB_KEY_k) {
-                server.layout.focusWindowUp();
+                server.activeLayout().focusWindowUp();
                 server.applyLayout();
                 return;
             } else if (sym == c.XKB_KEY_bracketleft) {
                 // Mod+[: consume-or-expel 左 (niri セマンティクス)
-                server.layout.consumeOrExpelLeft() catch {};
+                server.activeLayout().consumeOrExpelLeft() catch {};
                 server.applyLayout();
                 return;
             } else if (sym == c.XKB_KEY_bracketright) {
-                server.layout.consumeOrExpelRight() catch {};
+                server.activeLayout().consumeOrExpelRight() catch {};
                 server.applyLayout();
                 return;
             } else if (sym == c.XKB_KEY_r) {
                 // Mod+R: 列幅プリセットをサイクル
-                server.layout.cycleColumnWidth();
+                server.activeLayout().cycleColumnWidth();
+                server.applyLayout();
+                return;
+            } else if (sym == c.XKB_KEY_f and shift) {
+                // Mod+Shift+F: フルスクリーントグル
+                if (server.focused) |t| {
+                    t.fullscreen = !t.fullscreen;
+                    _ = c.wlr_xdg_toplevel_set_fullscreen(t.xdg_toplevel, t.fullscreen);
+                    server.applyLayout();
+                }
+                return;
+            } else if (sym == c.XKB_KEY_f) {
+                // Mod+F: フォーカス列を最大化トグル
+                server.activeLayout().toggleMaximizeColumn();
                 server.applyLayout();
                 return;
             }
@@ -457,6 +548,36 @@ fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
     }
 
     c.wlr_seat_keyboard_notify_key(server.seat, event.time_msec, event.keycode, event.state);
+}
+
+fn digitFromSym(sym: u32) ?u8 {
+    return switch (sym) {
+        c.XKB_KEY_1 => 1,
+        c.XKB_KEY_2 => 2,
+        c.XKB_KEY_3 => 3,
+        c.XKB_KEY_4 => 4,
+        c.XKB_KEY_5 => 5,
+        c.XKB_KEY_6 => 6,
+        c.XKB_KEY_7 => 7,
+        c.XKB_KEY_8 => 8,
+        c.XKB_KEY_9 => 9,
+        else => null,
+    };
+}
+
+fn switchWorkspace(n: usize) void {
+    if (n >= WORKSPACE_COUNT or n == server.active_ws) return;
+    server.active_ws = n;
+    // 切替先のフォーカス窓へキーボードフォーカスを移す
+    if (server.activeLayout().focusedWindow()) |t| {
+        focusToplevel(t);
+    } else {
+        server.focused = null;
+        c.wlr_seat_keyboard_notify_clear_focus(server.seat);
+        server.applyLayout();
+    }
+    const s = server.layoutSummary();
+    logInfo("workspace {d}: {d} cols, {d} windows", .{ n + 1, s.cols, s.wins });
 }
 
 fn handleKeyboardDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
@@ -500,6 +621,7 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
             return;
         },
         .focus_rect = undefined,
+        .ws = server.active_ws,
         .map = undefined,
         .unmap = undefined,
         .commit = undefined,
@@ -533,9 +655,56 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     toplevel.request_fullscreen.notify = handleToplevelRequestFullscreen;
     c.wl_signal_add(&xdg_toplevel.events.request_fullscreen, &toplevel.request_fullscreen);
     // レイアウトに登録 (フォーカス列の隣へ新列, niri 式)
-    server.layout.addWindow(toplevel) catch {};
+    server.activeLayout().addWindow(toplevel) catch {};
+    server.toplevels.append(server.gpa, toplevel) catch {};
     server.applyLayout();
-    logInfo("new toplevel", .{});
+    logInfo("new toplevel (ws {d})", .{server.active_ws + 1});
+}
+
+// ---- XDG ポップアップ ----
+
+fn handleNewXdgPopup(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = listener;
+    const xdg_popup: *c.wlr_xdg_popup = @ptrCast(@alignCast(data.?));
+    const popup = server.gpa.create(Popup) catch return;
+    popup.* = .{
+        .xdg_popup = xdg_popup,
+        .commit = undefined,
+        .destroy = undefined,
+    };
+
+    // 親の xdg surface から、toplevel 生成時に base->data へ入れた scene tree を得る
+    const parent_surface: *c.wlr_surface = @ptrCast(xdg_popup.parent);
+    const parent_xdg: *c.wlr_xdg_surface = @ptrCast(c.wlr_xdg_surface_try_from_wlr_surface(parent_surface) orelse {
+        server.gpa.destroy(popup);
+        return;
+    });
+    const parent_tree: *c.wlr_scene_tree = @ptrCast(@alignCast(parent_xdg.data));
+    const popup_base: *c.wlr_xdg_surface = @ptrCast(xdg_popup.base);
+    popup_base.data = c.wlr_scene_xdg_surface_create(parent_tree, popup_base);
+
+    popup.commit.notify = handlePopupCommit;
+    c.wl_signal_add(&popup_base.surface.events.commit, &popup.commit);
+    popup.destroy.notify = handlePopupDestroy;
+    c.wl_signal_add(&xdg_popup.events.destroy, &popup.destroy);
+    logInfo("new popup", .{});
+}
+
+fn handlePopupCommit(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
+    const popup: *Popup = @fieldParentPtr("commit", @as(*c.wl_listener, @ptrCast(listener)));
+    const popup_base: *c.wlr_xdg_surface = @ptrCast(popup.xdg_popup.base);
+    if (popup_base.initial_commit) {
+        _ = c.wlr_xdg_surface_schedule_configure(popup_base);
+    }
+}
+
+fn handlePopupDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
+    const popup: *Popup = @fieldParentPtr("destroy", @as(*c.wl_listener, @ptrCast(listener)));
+    c.wl_list_remove(&popup.commit.link);
+    c.wl_list_remove(&popup.destroy.link);
+    server.gpa.destroy(popup);
 }
 
 fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
@@ -574,8 +743,14 @@ fn handleToplevelDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callcon
     c.wl_list_remove(&toplevel.request_fullscreen.link);
     // フォーカスリングの矩形も破棄しないと画面に残る
     c.wlr_scene_node_destroy(&toplevel.focus_rect.node);
+    server.workspaces[toplevel.ws].removeWindow(toplevel);
+    for (server.toplevels.items, 0..) |t, i| {
+        if (t == toplevel) {
+            _ = server.toplevels.orderedRemove(i);
+            break;
+        }
+    }
     if (server.focused == toplevel) server.focused = null;
-    server.layout.removeWindow(toplevel);
     server.applyLayout();
     server.gpa.destroy(toplevel);
 }
@@ -600,6 +775,10 @@ fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaqu
 }
 
 fn focusToplevel(toplevel: *Toplevel) void {
+    // クリック等で別ワークスペースの窓が指定されたら切替 (通常は表示中と同一)
+    if (toplevel.ws != server.active_ws) {
+        server.active_ws = toplevel.ws;
+    }
     if (server.focused) |prev| {
         if (prev != toplevel) {
             _ = c.wlr_xdg_toplevel_set_activated(prev.xdg_toplevel, false);

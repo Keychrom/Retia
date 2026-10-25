@@ -22,6 +22,8 @@ pub fn Layout(comptime Window: type) type {
             windows: std.ArrayList(Window) = .empty,
             /// 出力幅に対する幅の比率 (preset 幅でサイクルする)
             width_ratio: f32 = 0.5,
+            /// 最大化前の比率 (toggleMaximizeColumn 用)
+            prev_ratio: f32 = 0,
 
             fn deinit(self: *Column, allocator: Allocator) void {
                 self.windows.deinit(allocator);
@@ -254,6 +256,33 @@ pub fn Layout(comptime Window: type) type {
                 }
             }
             col.width_ratio = next;
+        }
+
+        /// フォーカス列の最大化トグル (全面 ↔ 直前の比率)
+        pub fn toggleMaximizeColumn(self: *Self) void {
+            const col = self.focusedColumnPtr();
+            if (col.width_ratio >= 0.999) {
+                col.width_ratio = if (col.prev_ratio > 0) col.prev_ratio else 0.5;
+                col.prev_ratio = 0;
+            } else {
+                col.prev_ratio = col.width_ratio;
+                col.width_ratio = 1.0;
+            }
+        }
+
+        // ---- 列の引き抜き・追加 (ワークスペース間移動用) ----
+
+        pub fn takeFocusedColumn(self: *Self) ?Column {
+            if (self.columns.items.len == 0) return null;
+            const col = self.columns.orderedRemove(self.focused_column);
+            self.clampFocusAfterColumnRemoval(self.focused_column);
+            return col;
+        }
+
+        pub fn appendColumn(self: *Self, col: Column) !void {
+            try self.columns.append(self.allocator, col);
+            self.focused_column = self.columns.items.len - 1;
+            self.focused_window = 0;
         }
 
         // ---- 幾何 ----
