@@ -179,7 +179,7 @@ fn handleNewInput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) v
 
     if (device.type == c.WLR_INPUT_DEVICE_KEYBOARD) {
         // 0.19 からは union でなく from_input_device() で専用型へ変換する
-        if (c.wlr_keyboard_from_input_device(device)) |wlr_kb| handleNewKeyboard(wlr_kb);
+        if (c.wlr_keyboard_from_input_device(device)) |wlr_kb| handleNewKeyboard(@ptrCast(wlr_kb));
     } else if (device.type == c.WLR_INPUT_DEVICE_POINTER) {
         _ = c.wlr_cursor_attach_input_device(server.cursor, device);
     }
@@ -199,7 +199,7 @@ fn handleNewKeyboard(wlr_kb: *c.wlr_keyboard) void {
     defer c.xkb_context_unref(ctx);
     var rules = std.mem.zeroes(c.xkb_rule_names);
     const keymap = c.xkb_keymap_new_from_names(ctx, &rules, c.XKB_KEYMAP_COMPILE_NO_FLAGS) orelse return;
-    c.wlr_keyboard_set_keymap(wlr_kb, keymap);
+    c.wlr_keyboard_set_keymap(wlr_kb, keymap) catch {};
     c.xkb_keymap_unref(keymap);
     _ = c.wlr_keyboard_set_repeat_info(wlr_kb, 25, 600);
 
@@ -216,13 +216,13 @@ fn handleNewKeyboard(wlr_kb: *c.wlr_keyboard) void {
 
 fn handleKeyboardModifiers(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const kb: *Keyboard = @fieldParentPtr("modifiers", listener.?);
+    const kb: *Keyboard = @fieldParentPtr("modifiers", @ptrCast(listener));
     c.wlr_seat_set_keyboard(server.seat, kb.wlr_keyboard);
     c.wlr_seat_keyboard_notify_modifiers(server.seat, &kb.wlr_keyboard.modifiers);
 }
 
 fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
-    const kb: *Keyboard = @fieldParentPtr("key", listener.?);
+    const kb: *Keyboard = @fieldParentPtr("key", @ptrCast(listener));
     const event: *c.wlr_keyboard_key_event = @ptrCast(@alignCast(data.?));
     const wlr_kb = kb.wlr_keyboard;
 
@@ -253,7 +253,7 @@ fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
 
 fn handleKeyboardDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const kb: *Keyboard = @fieldParentPtr("destroy", listener.?);
+    const kb: *Keyboard = @fieldParentPtr("destroy", @ptrCast(listener));
     c.wl_list_remove(&kb.modifiers.link);
     c.wl_list_remove(&kb.key.link);
     c.wl_list_remove(&kb.destroy.link);
@@ -298,10 +298,12 @@ fn handleNewXdgSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(
         .request_fullscreen = undefined,
     };
 
+    // surface は [*c] なので field access 前に単一ポインタへ
+    const wlr_surface: *c.wlr_surface = @ptrCast(xdg_surface.surface);
     toplevel.map.notify = handleToplevelMap;
-    c.wl_signal_add(&xdg_surface.surface.events.map, &toplevel.map);
+    c.wl_signal_add(&wlr_surface.events.map, &toplevel.map);
     toplevel.unmap.notify = handleToplevelUnmap;
-    c.wl_signal_add(&xdg_surface.surface.events.unmap, &toplevel.unmap);
+    c.wl_signal_add(&wlr_surface.events.unmap, &toplevel.unmap);
     toplevel.destroy.notify = handleToplevelDestroy;
     c.wl_signal_add(&xdg_surface.events.destroy, &toplevel.destroy);
     toplevel.request_maximize.notify = handleToplevelRequestMaximize;
@@ -312,7 +314,7 @@ fn handleNewXdgSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(
 
 fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("map", listener.?);
+    const toplevel: *Toplevel = @fieldParentPtr("map", @ptrCast(listener));
 
     // M1 レイアウト: レイアウト全面 (M2 でスクロール列に置き換え)
     const size = layoutSize();
@@ -325,13 +327,13 @@ fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
 
 fn handleToplevelUnmap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("unmap", listener.?);
+    const toplevel: *Toplevel = @fieldParentPtr("unmap", @ptrCast(listener));
     if (server.focused == toplevel) server.focused = null;
 }
 
 fn handleToplevelDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("destroy", listener.?);
+    const toplevel: *Toplevel = @fieldParentPtr("destroy", @ptrCast(listener));
     c.wl_list_remove(&toplevel.map.link);
     c.wl_list_remove(&toplevel.unmap.link);
     c.wl_list_remove(&toplevel.destroy.link);
@@ -344,7 +346,7 @@ fn handleToplevelDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callcon
 /// 最大化/フルスクリーン要求は M1 では全部「レイアウト全面」で応える
 fn handleToplevelRequestMaximize(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("request_maximize", listener.?);
+    const toplevel: *Toplevel = @fieldParentPtr("request_maximize", @ptrCast(listener));
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_maximized(toplevel.xdg_toplevel, true);
@@ -353,7 +355,7 @@ fn handleToplevelRequestMaximize(listener: [*c]c.wl_listener, data: ?*anyopaque)
 
 fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("request_fullscreen", listener.?);
+    const toplevel: *Toplevel = @fieldParentPtr("request_fullscreen", @ptrCast(listener));
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_fullscreen(toplevel.xdg_toplevel, true);
@@ -385,30 +387,41 @@ fn layoutSize() struct { w: u32, h: u32 } {
 fn handleCursorMotion(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_motion_event = @ptrCast(@alignCast(data.?));
-    c.wlr_cursor_move(server.cursor, &event.pointer.?.base, event.delta_x, event.delta_y);
+    const pointer: *c.wlr_pointer = @ptrCast(event.pointer);
+    c.wlr_cursor_move(server.cursor, &pointer.base, event.delta_x, event.delta_y);
     processPointerMotion(event.time_msec);
 }
 
 fn handleCursorMotionAbsolute(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_motion_absolute_event = @ptrCast(@alignCast(data.?));
-    c.wlr_cursor_warp_absolute(server.cursor, &event.pointer.?.base, event.x, event.y);
+    const pointer: *c.wlr_pointer = @ptrCast(event.pointer);
+    c.wlr_cursor_warp_absolute(server.cursor, &pointer.base, event.x, event.y);
     processPointerMotion(event.time_msec);
 }
 
 fn processPointerMotion(time_msec: u32) void {
     var sx: f64 = 0;
     var sy: f64 = 0;
-    const node = c.wlr_scene_node_at(&server.scene.tree.node, server.cursor.x, server.cursor.y, &sx, &sy);
-    if (node != null and node.?.type == c.WLR_SCENE_NODE_BUFFER) {
-        const scene_buffer: *c.wlr_scene_buffer = @ptrCast(@alignCast(node.?));
-        if (c.wlr_scene_surface_try_from_buffer(scene_buffer)) |scene_surface| {
-            c.wlr_seat_pointer_notify_enter(server.seat, scene_surface.surface, sx, sy);
-            c.wlr_seat_pointer_notify_motion(server.seat, time_msec, sx, sy);
-            return;
-        }
+    const node_raw = c.wlr_scene_node_at(&server.scene.tree.node, server.cursor.x, server.cursor.y, &sx, &sy);
+    if (node_raw == null) {
+        c.wlr_seat_pointer_notify_clear_focus(server.seat);
+        return;
     }
-    c.wlr_seat_pointer_notify_clear_focus(server.seat);
+    const node: *c.wlr_scene_node = @ptrCast(node_raw);
+    if (node.type != c.WLR_SCENE_NODE_BUFFER) {
+        c.wlr_seat_pointer_notify_clear_focus(server.seat);
+        return;
+    }
+    const scene_buffer: *c.wlr_scene_buffer = @ptrCast(node);
+    const scene_surface_raw = c.wlr_scene_surface_try_from_buffer(scene_buffer);
+    if (scene_surface_raw == null) {
+        c.wlr_seat_pointer_notify_clear_focus(server.seat);
+        return;
+    }
+    const scene_surface: *c.wlr_scene_surface = @ptrCast(scene_surface_raw);
+    c.wlr_seat_pointer_notify_enter(server.seat, scene_surface.surface, sx, sy);
+    c.wlr_seat_pointer_notify_motion(server.seat, time_msec, sx, sy);
 }
 
 fn handleCursorButton(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
