@@ -363,7 +363,7 @@ fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaqu
 fn focusToplevel(toplevel: *Toplevel) void {
     if (server.focused) |prev| {
         if (prev != toplevel) {
-            _ = c.wlr_xdg_toplevel_set_activated(prev.xdg_surface.toplevel.?, false);
+            _ = c.wlr_xdg_toplevel_set_activated(prev.xdg_toplevel, false);
         }
     }
     server.focused = toplevel;
