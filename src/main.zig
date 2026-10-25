@@ -52,6 +52,8 @@ fn logErr(comptime fmt: []const u8, args: anytype) void {
 
 const Toplevel = struct {
     xdg_toplevel: *c.wlr_xdg_toplevel,
+    /// xdg_toplevel.base は [*c] なので単一ポインタ化して保持する
+    base: *c.wlr_xdg_surface,
     scene_tree: *c.wlr_scene_tree,
 
     map: c.wl_listener,
@@ -359,11 +361,13 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     _ = listener;
     // 0.19: new_surface は廃止。new_toplevel (data = wlr_xdg_toplevel) を使う
     const xdg_toplevel: *c.wlr_xdg_toplevel = @ptrCast(@alignCast(data.?));
+    const base: *c.wlr_xdg_surface = @ptrCast(xdg_toplevel.base);
 
     const toplevel = server.gpa.create(Toplevel) catch return;
     toplevel.* = .{
         .xdg_toplevel = xdg_toplevel,
-        .scene_tree = c.wlr_scene_xdg_surface_create(&server.scene.tree, xdg_toplevel.base) orelse {
+        .base = base,
+        .scene_tree = c.wlr_scene_xdg_surface_create(&server.scene.tree, base) orelse {
             server.gpa.destroy(toplevel);
             return;
         },
@@ -376,14 +380,14 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     };
     toplevel.scene_tree.node.data = toplevel;
     // popup の親解決用 (M2 で popup を扱うときに使う)
-    xdg_toplevel.base.data = toplevel.scene_tree;
+    base.data = toplevel.scene_tree;
 
     toplevel.map.notify = handleToplevelMap;
-    c.wl_signal_add(&xdg_toplevel.base.surface.events.map, &toplevel.map);
+    c.wl_signal_add(&base.surface.events.map, &toplevel.map);
     toplevel.unmap.notify = handleToplevelUnmap;
-    c.wl_signal_add(&xdg_toplevel.base.surface.events.unmap, &toplevel.unmap);
+    c.wl_signal_add(&base.surface.events.unmap, &toplevel.unmap);
     toplevel.commit.notify = handleToplevelCommit;
-    c.wl_signal_add(&xdg_toplevel.base.surface.events.commit, &toplevel.commit);
+    c.wl_signal_add(&base.surface.events.commit, &toplevel.commit);
     toplevel.destroy.notify = handleToplevelDestroy;
     c.wl_signal_add(&xdg_toplevel.events.destroy, &toplevel.destroy);
     toplevel.request_maximize.notify = handleToplevelRequestMaximize;
@@ -405,7 +409,7 @@ fn handleToplevelCommit(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     const toplevel: *Toplevel = @fieldParentPtr("commit", @as(*c.wl_listener, @ptrCast(listener)));
     // 0.19: initial commit にはコンポジタが configure で応答する義務がある。
     // これがないとクライアントは map せず待ち続ける (kitty が止まった原因)
-    if (toplevel.xdg_toplevel.base.initial_commit) {
+    if (toplevel.base.initial_commit) {
         // M1 レイアウト: レイアウト全面 (M2 でスクロール列に置き換え)
         const size = layoutSize();
         _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
@@ -438,7 +442,7 @@ fn handleToplevelRequestMaximize(listener: [*c]c.wl_listener, data: ?*anyopaque)
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_maximized(toplevel.xdg_toplevel, true);
-    _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_toplevel.base);
+    _ = c.wlr_xdg_surface_schedule_configure(toplevel.base);
 }
 
 fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
@@ -447,7 +451,7 @@ fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaqu
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_fullscreen(toplevel.xdg_toplevel, true);
-    _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_toplevel.base);
+    _ = c.wlr_xdg_surface_schedule_configure(toplevel.base);
 }
 
 fn focusToplevel(toplevel: *Toplevel) void {
@@ -458,7 +462,7 @@ fn focusToplevel(toplevel: *Toplevel) void {
     }
     server.focused = toplevel;
     _ = c.wlr_xdg_toplevel_set_activated(toplevel.xdg_toplevel, true);
-    _ = c.wlr_seat_keyboard_notify_enter(server.seat, toplevel.xdg_toplevel.base.surface, null, 0, null);
+    _ = c.wlr_seat_keyboard_notify_enter(server.seat, toplevel.base.surface, null, 0, null);
 }
 
 fn layoutSize() struct { w: i32, h: i32 } {
