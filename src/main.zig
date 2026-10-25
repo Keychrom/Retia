@@ -834,7 +834,7 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
         .base = base,
         .focus_rect = ring,
         .scene_tree = c.wlr_scene_xdg_surface_create(server.windows_tree, base) orelse {
-            c.wlr_scene_node_destroy(&ring.node);
+            c.wlr_scene_node_destroy(&ring.*.node);
             server.gpa.destroy(toplevel);
             return;
         },
