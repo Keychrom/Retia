@@ -290,6 +290,7 @@ pub fn Layout(comptime Window: type) type {
         /// フォーカス列が見える viewport の目标 x (clamp 済み)。
         /// アニメーションは呼び出し側 (コンポジタ) がこの値へイージングする。
         pub fn viewportTargetX(self: *Self) i32 {
+            if (self.columns.items.len == 0) return 0;
             const focus_x = self.columnX(self.focused_column);
             const focus_w = self.columnWidthPx(self.focused_column);
             const max_scroll = @max(self.stripWidth() - self.usable_w, 0);
