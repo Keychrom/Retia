@@ -136,10 +136,15 @@ pub fn main() !void {
     server.display = c.wl_display_create() orelse return error.WlDisplayCreateFailed;
     const event_loop = c.wl_display_get_event_loop(server.display);
     if (c.getenv("WAYLAND_DISPLAY") != null) {
-        // nested: wayland backend を直接作る。autocreate は multi でラップして返すため
-        // wlr_wl_output_create が使えない
-        server.backend = c.wlr_wl_backend_create(event_loop, null) orelse return error.BackendCreateFailed;
-        server.nested = true;
+        // nested を試みる。接続できない環境 (WAYLAND_DISPLAY が残っている alone な
+        // TTY など) では DRM standalone にフォールバックする
+        if (c.wlr_wl_backend_create(event_loop, null)) |wl_backend| {
+            server.backend = @ptrCast(wl_backend);
+            server.nested = true;
+        } else {
+            logErr("wayland backend failed — falling back to DRM standalone", .{});
+            server.backend = c.wlr_backend_autocreate(event_loop, null) orelse return error.BackendCreateFailed;
+        }
     } else {
         server.backend = c.wlr_backend_autocreate(event_loop, null) orelse return error.BackendCreateFailed;
     }
