@@ -82,6 +82,7 @@ const Server = struct {
     seat: *c.wlr_seat = undefined,
     xdg_shell: *c.wlr_xdg_shell = undefined,
     socket_name: [:0]const u8 = undefined,
+    nested: bool = false,
 
     focused: ?*Toplevel = null,
 
@@ -105,9 +106,9 @@ pub fn main() !void {
     const event_loop = c.wl_display_get_event_loop(server.display);
     if (c.getenv("WAYLAND_DISPLAY") != null) {
         // nested: wayland backend を直接作る。autocreate は multi でラップして返すため
-        // wlr_wl_output_create が使えない。0.19 では output も明示的に要求する
+        // wlr_wl_output_create が使えない
         server.backend = c.wlr_wl_backend_create(event_loop, null) orelse return error.BackendCreateFailed;
-        _ = c.wlr_wl_output_create(server.backend);
+        server.nested = true;
     } else {
         server.backend = c.wlr_backend_autocreate(event_loop, null) orelse return error.BackendCreateFailed;
     }
@@ -150,6 +151,13 @@ pub fn main() !void {
     c.wl_signal_add(&server.cursor.events.button, &server.cursor_button);
 
     _ = c.signal(c.SIGINT, handleSigint);
+
+    // リスナー登録を済ませてから start (start 時に new_output が飛ぶ)
+    _ = c.wlr_backend_start(server.backend);
+    if (server.nested) {
+        // 0.19 の wayland backend は output を自動生成しない。明示的に要求する
+        _ = c.wlr_wl_output_create(server.backend);
+    }
 
     logInfo("M1 starting, WAYLAND_DISPLAY={s}", .{server.socket_name});
     _ = c.wl_display_run(server.display);
