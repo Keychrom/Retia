@@ -515,8 +515,9 @@ fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
                 spawnTerminal();
                 return;
             } else if (sym == c.XKB_KEY_d) {
-                // Mod+D: ランチャー (bemenu。M5 で自作スタートメニューに置き換え)
-                spawn("bemenu-run");
+                // Mod+D: ランチャー (fuzzel。bemenu はこの環境で renderer が
+                // segfault するため不採用。M5 で自作スタートメニューに置き換え)
+                spawn("fuzzel");
                 return;
             } else if (sym == c.XKB_KEY_Escape and !ctrl) {
                 // Super+Escape: コンポジタ終了 (nested 開発用の逃げ道)
