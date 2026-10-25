@@ -429,6 +429,7 @@ fn handleToplevelDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callcon
     const toplevel: *Toplevel = @fieldParentPtr("destroy", @as(*c.wl_listener, @ptrCast(listener)));
     c.wl_list_remove(&toplevel.map.link);
     c.wl_list_remove(&toplevel.unmap.link);
+    c.wl_list_remove(&toplevel.commit.link);
     c.wl_list_remove(&toplevel.destroy.link);
     c.wl_list_remove(&toplevel.request_maximize.link);
     c.wl_list_remove(&toplevel.request_fullscreen.link);
