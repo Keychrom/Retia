@@ -78,8 +78,6 @@ pub fn build(b: *std.Build) void {
         " \t\r\n",
     );
 
-    std.fs.cwd().makePath("zig-out/gen") catch {};
-
     var gen_steps: [128]*std.Build.Step = undefined;
     var gen_n: usize = 0;
 
@@ -115,7 +113,16 @@ pub fn build(b: *std.Build) void {
             "zig-out/gen/{s}",
             .{header_name},
         ) catch unreachable;
-        const gen = b.addSystemCommand(&.{ "wayland-scanner", "server-header", xml, out_path });
+        // std.fs は 0.16 で API が変わったので、mkdir も sh -c 側で済ませる
+        const gen = b.addSystemCommand(&.{
+            "sh",
+            "-c",
+            std.fmt.allocPrint(
+                b.allocator,
+                "mkdir -p zig-out/gen && wayland-scanner server-header '{s}' '{s}'",
+                .{ xml, out_path },
+            ) catch unreachable,
+        });
         gen_steps[gen_n] = gen.step;
         gen_n += 1;
         if (gen_n == gen_steps.len) break;
