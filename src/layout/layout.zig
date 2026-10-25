@@ -251,9 +251,12 @@ pub fn Layout(comptime Window: type) type {
         // ---- 幾何 ----
 
         pub fn columnWidthPx(self: *Self, idx: usize) i32 {
-            const ratio = self.columns.items[idx].width_ratio;
+            return self.columnWidthFor(&self.columns.items[idx]);
+        }
+
+        fn columnWidthFor(self: *Self, col: *const Column) i32 {
             const inner_w = @max(self.usable_w - 2 * self.gap, 1);
-            return @max(@as(i32, @intFromFloat(ratio * @as(f32, @floatFromInt(inner_w)))), 1);
+            return @max(@as(i32, @intFromFloat(col.width_ratio * @as(f32, @floatFromInt(inner_w)))), 1);
         }
 
         /// 列 idx のストリップ上での x 座標 (viewport 適用前)
@@ -302,7 +305,7 @@ pub fn Layout(comptime Window: type) type {
             errdefer boxes.deinit(allocator);
             var x: i32 = self.gap;
             for (self.columns.items) |*col| {
-                const col_w = @max(@as(i32, @intFromFloat(col.width_ratio * @as(f32, @floatFromInt(@max(self.usable_w - 2 * self.gap, 1)))))), 1);
+                const col_w = self.columnWidthFor(col);
                 const n = col.windows.items.len;
                 if (n == 0) {
                     x += col_w + self.gap;
