@@ -17,6 +17,7 @@ const std = @import("std");
 const c = @cImport({
     @cInclude("stdlib.h");
     @cInclude("signal.h");
+    @cInclude("time.h");
     @cInclude("unistd.h");
     @cInclude("wayland-server-core.h");
     @cInclude("xkbcommon/xkbcommon.h");
@@ -205,8 +206,6 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
     c.wl_signal_add(&wlr_output.events.destroy, &output.destroy);
 
     _ = c.wlr_output_layout_add_auto(server.layout, wlr_output);
-    // 最初のフレームを要求 (以後は commit ごとに schedule する連続描画)
-    c.wlr_output_schedule_frame(wlr_output);
     logInfo("output added: {s}", .{outputName(wlr_output)});
 }
 
@@ -215,11 +214,16 @@ fn handleOutputFrame(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
     const output: *Output = @fieldParentPtr("frame", @as(*c.wl_listener, @ptrCast(listener)));
     const scene_output = c.wlr_scene_get_scene_output(server.scene, output.wlr_output);
     if (scene_output != null) {
-        // scene graph の内容を output に commit する
+        // scene graph の内容を output に commit する。
+        // 注意: ここで wlr_output_schedule_frame を呼ぶと frame イベントが即座に
+        // 再発火して暴走+毎フレームバッファリーク (OOM した)。tinywl も schedule
+        // しない — scene が damage を検知したときだけ自動で回る
         _ = c.wlr_scene_output_commit(scene_output, null);
     }
-    // M1 は連続描画 (M2 で damage ベースに最適化)
-    c.wlr_output_schedule_frame(output.wlr_output);
+    // クライアント (kitty 等) にフレーム完了を通知しないと描画が止まる
+    var now: c.struct_timespec = undefined;
+    _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
+    c.wlr_scene_output_send_frame_done(scene_output, &now);
 }
 
 fn handleOutputDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
