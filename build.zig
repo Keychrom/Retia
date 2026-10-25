@@ -62,7 +62,8 @@ pub fn build(b: *std.Build) void {
     ) catch unreachable;
     const refs = b.run(&.{ "sh", "-c", grep_cmd });
 
-    const home = std.process.getEnvVarOwned(b.allocator, "HOME") catch "";
+    // 注: std.posix.getenv は Linux 専用。コンポジタのクロスビルドは想定しない
+    const home: []const u8 = std.posix.getenv("HOME") orelse "";
     const wlr_protocol_dir = b.option(
         []const u8,
         "wlroots-protocol-dir",
