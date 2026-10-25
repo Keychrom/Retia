@@ -117,6 +117,15 @@ const Server = struct {
     toplevels: std.ArrayList(*Toplevel) = .empty,
     viewport_x: f64 = 0,
     outputs: std.ArrayList(*Output) = .empty,
+    focused: ?*Toplevel = null,
+
+    new_output: c.wl_listener = undefined,
+    new_input: c.wl_listener = undefined,
+    new_xdg_toplevel: c.wl_listener = undefined,
+    new_xdg_popup: c.wl_listener = undefined,
+    cursor_motion: c.wl_listener = undefined,
+    cursor_motion_absolute: c.wl_listener = undefined,
+    cursor_button: c.wl_listener = undefined,
 
     fn activeLayout(self: *Server) *SceneLayout {
         return &self.workspaces[self.active_ws];
@@ -128,16 +137,6 @@ const Server = struct {
         for (self.activeLayout().columns.items) |*col| wins += col.windows.items.len;
         return .{ .cols = self.activeLayout().columns.items.len, .wins = wins };
     }
-
-    focused: ?*Toplevel = null,
-
-    new_output: c.wl_listener = undefined,
-    new_input: c.wl_listener = undefined,
-    new_xdg_toplevel: c.wl_listener = undefined,
-    new_xdg_popup: c.wl_listener = undefined,
-    cursor_motion: c.wl_listener = undefined,
-    cursor_motion_absolute: c.wl_listener = undefined,
-    cursor_button: c.wl_listener = undefined,
 
     /// レイアウトエンジンの状態を scene node に反映する (呼び出し頻度高・軽量)
     pub fn applyLayout(self: *Server) void {
