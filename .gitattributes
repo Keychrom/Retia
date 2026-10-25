@@ -1,0 +1,5 @@
+# リポジトリ内は LF で統一 (特に .sh は VM/Linux で実行される)
+* text=auto
+*.sh text eol=lf
+*.zig text eol=lf
+*.md text eol=lf
