@@ -21,6 +21,7 @@ const c = @cImport({
     @cInclude("wayland-server-core.h");
     @cInclude("xkbcommon/xkbcommon.h");
     @cInclude("wlr/backend.h");
+    @cInclude("wlr/backend/wayland.h");
     @cInclude("wlr/render/allocator.h");
     @cInclude("wlr/render/wlr_renderer.h");
     @cInclude("wlr/types/wlr_compositor.h");
