@@ -499,6 +499,7 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
             server.gpa.destroy(toplevel);
             return;
         },
+        .focus_rect = undefined,
         .map = undefined,
         .unmap = undefined,
         .commit = undefined,
@@ -685,7 +686,8 @@ fn handleCursorButton(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.
                 if (c.wlr_scene_surface_try_from_buffer(buf) != null) {
                     // バッファの直接の親は xdg surface 用のサブツリーで、data は
                     // その祖先の toplevel ツリーに置いてある。親を遡って探す
-                    var cur: [*c]c.wlr_scene_node = node.parent;
+                    // (0.19 で node.parent は wlr_scene_tree*)
+                    var cur: [*c]c.wlr_scene_tree = node.parent;
                     while (cur != null) {
                         const tree: *c.wlr_scene_tree = @ptrCast(cur);
                         if (tree.node.data) |d| {
