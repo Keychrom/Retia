@@ -103,11 +103,13 @@ pub fn main() !void {
 
     server.display = c.wl_display_create() orelse return error.WlDisplayCreateFailed;
     const event_loop = c.wl_display_get_event_loop(server.display);
-    server.backend = c.wlr_backend_autocreate(event_loop, null) orelse return error.BackendCreateFailed;
-    // 0.19 の wayland backend は output を自動生成しない。nested 時は明示的に要求する
-    // (DRM / headless では不要なので WAYLAND_DISPLAY の有無で判定)
     if (c.getenv("WAYLAND_DISPLAY") != null) {
+        // nested: wayland backend を直接作る。autocreate は multi でラップして返すため
+        // wlr_wl_output_create が使えない。0.19 では output も明示的に要求する
+        server.backend = c.wlr_wl_backend_create(event_loop, null) orelse return error.BackendCreateFailed;
         _ = c.wlr_wl_output_create(server.backend);
+    } else {
+        server.backend = c.wlr_backend_autocreate(event_loop, null) orelse return error.BackendCreateFailed;
     }
     server.renderer = c.wlr_renderer_autocreate(server.backend) orelse return error.RendererCreateFailed;
     _ = c.wlr_renderer_init_wl_display(server.renderer, server.display);
