@@ -37,6 +37,7 @@ const c = @cImport({
     @cInclude("wlr/types/wlr_scene.h");
     @cInclude("wlr/types/wlr_xdg_shell.h");
     @cInclude("wlr/types/wlr_layer_shell_v1.h");
+    @cInclude("wlr/types/wlr_screencopy_v1.h");
     @cInclude("wlr/util/log.h");
 });
 
@@ -272,6 +273,9 @@ pub fn main() !void {
     server.layers_top_tree = c.wlr_scene_tree_create(&server.scene.tree) orelse return error.SceneTreeCreateFailed;
     server.new_layer_surface.notify = handleNewLayerSurface;
     c.wl_signal_add(&server.layer_shell.events.new_surface, &server.new_layer_surface);
+
+    // スクリーンショット (grim 用。デバッグとユーザー機能の両方)
+    _ = c.wlr_screencopy_manager_v1_create(server.display);
 
     server.cursor = c.wlr_cursor_create() orelse return error.CursorCreateFailed;
     _ = c.wlr_cursor_attach_output_layout(server.cursor, server.output_layout);
