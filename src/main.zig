@@ -131,6 +131,7 @@ const Server = struct {
     scene_output_layout: *c.wlr_scene_output_layout = undefined,
     /// レイヤーシェル用ツリー (下層/上層)。窓は常にこの間に描画される
     layers_bottom_tree: *c.wlr_scene_tree = undefined,
+    windows_tree: *c.wlr_scene_tree = undefined,
     layers_top_tree: *c.wlr_scene_tree = undefined,
     layer_shell: *c.wlr_layer_shell_v1 = undefined,
     output_layout: *c.wlr_output_layout = undefined,
@@ -192,7 +193,7 @@ const Server = struct {
         for (self.toplevels.items) |t| {
             const visible = t.ws == self.active_ws;
             _ = c.wlr_scene_node_set_enabled(&t.scene_tree.node, visible);
-            _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, false);
+            _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, visible);
         }
 
         const boxes = l.windowBoxes(self.gpa) catch return;
@@ -214,8 +215,12 @@ const Server = struct {
             if (t.base.initial_commit) {
                 _ = c.wlr_xdg_toplevel_set_size(t.xdg_toplevel, box.w, box.h);
             }
-            // デバッグ中: リング更新停止
-            _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, false);
+            // フォーカスリング: フォーカス窓はアクセント色
+            const is_focused = self.focused == t;
+            const color: [4]f32 = if (is_focused) .{ 0.5, 0.78, 1.0, 1.0 } else .{ 0.31, 0.31, 0.31, 1.0 };
+            c.wlr_scene_rect_set_color(t.focus_rect, &color);
+            c.wlr_scene_rect_set_size(t.focus_rect, box.w + 4, box.h + 4);
+            _ = c.wlr_scene_node_set_position(&t.focus_rect.node, box.x - vx - 2, box.y - 2);
         }
 
         // 浮動窓 (レイアウト外)
@@ -223,7 +228,11 @@ const Server = struct {
             if (!t.floating or t.ws != self.active_ws or t.fullscreen) continue;
             _ = c.wlr_scene_node_set_enabled(&t.scene_tree.node, true);
             _ = c.wlr_scene_node_set_position(&t.scene_tree.node, t.fx - vx, t.fy);
-            _ = c.wlr_scene_node_set_enabled(&t.focus_rect.node, false);
+            const is_focused = self.focused == t;
+            const fcolor: [4]f32 = if (is_focused) .{ 0.5, 0.78, 1.0, 1.0 } else .{ 0.31, 0.31, 0.31, 1.0 };
+            c.wlr_scene_rect_set_color(t.focus_rect, &fcolor);
+            c.wlr_scene_rect_set_size(t.focus_rect, t.fw + 4, t.fh + 4);
+            _ = c.wlr_scene_node_set_position(&t.focus_rect.node, t.fx - vx - 2, t.fy - 2);
         }
     }
 };
@@ -270,6 +279,7 @@ pub fn main() !void {
     // レイヤーシェル (ランチャー/バー/壁紙)。窓より下/上のツリーを用意する
     server.layer_shell = c.wlr_layer_shell_v1_create(server.display, 4) orelse return error.LayerShellCreateFailed;
     server.layers_bottom_tree = c.wlr_scene_tree_create(&server.scene.tree) orelse return error.SceneTreeCreateFailed;
+    server.windows_tree = c.wlr_scene_tree_create(&server.scene.tree) orelse return error.SceneTreeCreateFailed;
     server.layers_top_tree = c.wlr_scene_tree_create(&server.scene.tree) orelse return error.SceneTreeCreateFailed;
     server.new_layer_surface.notify = handleNewLayerSurface;
     c.wl_signal_add(&server.layer_shell.events.new_surface, &server.new_layer_surface);
@@ -812,14 +822,22 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     const base: *c.wlr_xdg_surface = @ptrCast(xdg_toplevel.base);
 
     const toplevel = server.gpa.create(Toplevel) catch return;
+    // windows_tree 内で「リング → 窓」の順に作る。z順序は作成順で保証され、
+    // place_below による並べ替えは不要 (あれは窓の描画を壊した)
+    const dim: [4]f32 = .{ 0.31, 0.31, 0.31, 1.0 };
+    const ring = c.wlr_scene_rect_create(server.windows_tree, 10, 10, &dim) orelse {
+        server.gpa.destroy(toplevel);
+        return;
+    };
     toplevel.* = .{
         .xdg_toplevel = xdg_toplevel,
         .base = base,
-        .scene_tree = c.wlr_scene_xdg_surface_create(&server.scene.tree, base) orelse {
+        .focus_rect = ring,
+        .scene_tree = c.wlr_scene_xdg_surface_create(server.windows_tree, base) orelse {
+            c.wlr_scene_node_destroy(&ring.node);
             server.gpa.destroy(toplevel);
             return;
         },
-        .focus_rect = undefined,
         .ws = server.active_ws,
         .map = undefined,
         .unmap = undefined,
@@ -832,17 +850,6 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     // popup の親解決用 (M2 で popup を扱うときに使う)
     base.data = toplevel.scene_tree;
 
-    // デバッグ中: フォーカスリングは全面停止 (描画問題の切り分け)
-    const dim: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 };
-    toplevel.focus_rect = c.wlr_scene_rect_create(&server.scene.tree, 10, 10, &dim) orelse {
-        server.gpa.destroy(toplevel);
-        return;
-    };
-    c.wlr_scene_node_set_enabled(&toplevel.focus_rect.node, false);
-    // 窓とリングは上層レイヤーの下に保つ。注意: ring を layers_top の下へ
-    // 追加で move すると窓の上に回ってしまう (リングが窓を隠す事故の原因)
-    // デバッグ中: 順序変更も停止
-    // c.wlr_scene_node_place_below(&toplevel.scene_tree.node, &server.layers_top_tree.node);
 
     const surface: *c.wlr_surface = @ptrCast(base.surface);
     toplevel.map.notify = handleToplevelMap;
