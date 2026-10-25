@@ -36,6 +36,7 @@ const c = @cImport({
     @cInclude("wlr/types/wlr_seat.h");
     @cInclude("wlr/types/wlr_scene.h");
     @cInclude("wlr/types/wlr_xdg_shell.h");
+    @cInclude("wlr/types/wlr_layer_shell_v1.h");
     @cInclude("wlr/util/log.h");
 });
 
@@ -86,6 +87,16 @@ const Popup = struct {
 
 const WORKSPACE_COUNT = 9;
 
+/// レイヤーシェル表面 (bemenu / waybar / 将来の自作バー。SPEC §3.1)
+const LayerSurface = struct {
+    layer_surface: *c.wlr_layer_surface_v1,
+    scene: *c.wlr_scene_layer_surface_v1,
+    map: c.wl_listener,
+    unmap: c.wl_listener,
+    commit: c.wl_listener,
+    destroy: c.wl_listener,
+};
+
 /// ポインタのドラッグ状態 (SPEC §5: mod+左ドラッグ移動 / mod+右ドラッグリサイズ)
 const CursorMode = enum {
     passthrough,
@@ -116,6 +127,10 @@ const Server = struct {
     allocator: *c.wlr_allocator = undefined,
     scene: *c.wlr_scene = undefined,
     scene_output_layout: *c.wlr_scene_output_layout = undefined,
+    /// レイヤーシェル用ツリー (下層/上層)。窓は常にこの間に描画される
+    layers_bottom_tree: *c.wlr_scene_tree = undefined,
+    layers_top_tree: *c.wlr_scene_tree = undefined,
+    layer_shell: *c.wlr_layer_shell_v1 = undefined,
     output_layout: *c.wlr_output_layout = undefined,
     cursor: *c.wlr_cursor = undefined,
     xcursor_manager: *c.wlr_xcursor_manager = undefined,
@@ -142,6 +157,7 @@ const Server = struct {
     new_input: c.wl_listener = undefined,
     new_xdg_toplevel: c.wl_listener = undefined,
     new_xdg_popup: c.wl_listener = undefined,
+    new_layer_surface: c.wl_listener = undefined,
     cursor_motion: c.wl_listener = undefined,
     cursor_motion_absolute: c.wl_listener = undefined,
     cursor_button: c.wl_listener = undefined,
@@ -249,6 +265,13 @@ pub fn main() !void {
     server.scene_output_layout = c.wlr_scene_attach_output_layout(server.scene, server.output_layout) orelse return error.SceneAttachFailed;
 
     server.xdg_shell = c.wlr_xdg_shell_create(server.display, 6) orelse return error.XdgShellCreateFailed;
+
+    // レイヤーシェル (ランチャー/バー/壁紙)。窓より下/上のツリーを用意する
+    server.layer_shell = c.wlr_layer_shell_v1_create(server.display, 4) orelse return error.LayerShellCreateFailed;
+    server.layers_bottom_tree = c.wlr_scene_tree_create(&server.scene.tree) orelse return error.SceneTreeCreateFailed;
+    server.layers_top_tree = c.wlr_scene_tree_create(&server.scene.tree) orelse return error.SceneTreeCreateFailed;
+    server.new_layer_surface.notify = handleNewLayerSurface;
+    c.wl_signal_add(&server.layer_shell.events.new_surface, &server.new_layer_surface);
 
     server.cursor = c.wlr_cursor_create() orelse return error.CursorCreateFailed;
     _ = c.wlr_cursor_attach_output_layout(server.cursor, server.output_layout);
@@ -488,6 +511,10 @@ fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
                 // Super+T: kitty 起動 (M7 で自作ターミナルに置き換え)
                 spawnTerminal();
                 return;
+            } else if (sym == c.XKB_KEY_d) {
+                // Mod+D: ランチャー (bemenu。M5 で自作スタートメニューに置き換え)
+                spawn("bemenu-run");
+                return;
             } else if (sym == c.XKB_KEY_Escape and !ctrl) {
                 // Super+Escape: コンポジタ終了 (nested 開発用の逃げ道)
                 c.wl_display_terminate(server.display);
@@ -647,18 +674,118 @@ fn handleKeyboardDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callcon
 }
 
 fn spawnTerminal() void {
+    spawn("kitty");
+}
+
+fn spawn(cmd: []const u8) void {
     // C の fork/exec を使う (std.process は Zig バージョン間で変わりやすいため)
     const pid = c.fork();
     if (pid == 0) {
         // VirtualBox SVGA3D の dmabuf インポートが不安定 (15秒程度で壊れる) ため、
-        // kitty をソフトウェアレンダリングで動かす。実機 (M3) では外す想定
+        // クライアントはソフトウェアレンダリングで動かす。実機 (M3) では外す想定
         _ = c.setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
-        _ = c.execlp("kitty", "kitty", @as(?*const anyopaque, null));
-        logErr("exec kitty failed", .{});
+        var buf: [128]u8 = undefined;
+        const cmd_z = std.fmt.bufPrintZ(&buf, "{s}", .{cmd}) catch return;
+        _ = c.execlp(cmd_z.ptr, cmd_z.ptr, @as(?*const anyopaque, null));
+        logErr("exec {s} failed", .{cmd});
         c._exit(1);
     } else if (pid < 0) {
         logErr("fork failed", .{});
     }
+}
+
+// ---- レイヤーシェル ----
+
+fn handleNewLayerSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = listener;
+    const layer_surface: *c.wlr_layer_surface_v1 = @ptrCast(@alignCast(data.?));
+
+    const layer = layer_surface.current.layer;
+    const parent: *c.wlr_scene_tree = if (layer == c.ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND or layer == c.ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM)
+        server.layers_bottom_tree
+    else
+        server.layers_top_tree;
+
+    const ls = server.gpa.create(LayerSurface) catch return;
+    ls.* = .{
+        .layer_surface = layer_surface,
+        .scene = c.wlr_scene_layer_surface_v1_create(parent, layer_surface) orelse {
+            server.gpa.destroy(ls);
+            return;
+        },
+        .map = undefined,
+        .unmap = undefined,
+        .commit = undefined,
+        .destroy = undefined,
+    };
+    // layer surface の popup の親解決用
+    layer_surface.data = ls.scene.tree;
+
+    const surface: *c.wlr_surface = @ptrCast(layer_surface.surface);
+    ls.map.notify = handleLayerSurfaceMap;
+    c.wl_signal_add(&surface.events.map, &ls.map);
+    ls.unmap.notify = handleLayerSurfaceUnmap;
+    c.wl_signal_add(&surface.events.unmap, &ls.unmap);
+    ls.commit.notify = handleLayerSurfaceCommit;
+    c.wl_signal_add(&surface.events.commit, &ls.commit);
+    ls.destroy.notify = handleLayerSurfaceDestroy;
+    c.wl_signal_add(&layer_surface.events.destroy, &ls.destroy);
+    logInfo("new layer surface (layer {d})", .{layer});
+}
+
+/// レイヤー表面をアンカーに従って配置する。バーの予約領域 (usable_area) は
+/// 現状フル領域で差し戻す (M5 でバーが予約する)
+fn configureLayerSurface(ls: *LayerSurface) void {
+    const size = layoutSize();
+    var full: c.wlr_box = .{ .x = 0, .y = 0, .width = size.w, .height = size.h };
+    var usable: c.wlr_box = .{ .x = 0, .y = 0, .width = size.w, .height = size.h };
+    c.wlr_scene_layer_surface_v1_configure(ls.scene, &full, &usable);
+    server.applyLayout();
+}
+
+fn handleLayerSurfaceMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
+    const ls: *LayerSurface = @fieldParentPtr("map", @as(*c.wl_listener, @ptrCast(listener)));
+    configureLayerSurface(ls);
+    // キーボード入力を欲するレイヤー (bemenu 等) にフォーカスを渡す
+    if (ls.layer_surface.current.keyboard_interactive != c.ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
+        const surface: *c.wlr_surface = @ptrCast(ls.layer_surface.surface);
+        _ = c.wlr_seat_keyboard_notify_enter(server.seat, surface, null, 0, null);
+    }
+}
+
+fn handleLayerSurfaceUnmap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
+    const ls: *LayerSurface = @fieldParentPtr("unmap", @as(*c.wl_listener, @ptrCast(listener)));
+    // キーボードを窓へ返す
+    if (ls.layer_surface.current.keyboard_interactive != c.ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
+        if (server.focused) |t| {
+            const surface: *c.wlr_surface = @ptrCast(t.base.surface);
+            _ = c.wlr_seat_keyboard_notify_enter(server.seat, surface, null, 0, null);
+        } else {
+            c.wlr_seat_keyboard_notify_clear_focus(server.seat);
+        }
+    }
+}
+
+fn handleLayerSurfaceCommit(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
+    const ls: *LayerSurface = @fieldParentPtr("commit", @as(*c.wl_listener, @ptrCast(listener)));
+    if (ls.layer_surface.initial_commit) {
+        _ = c.wlr_layer_surface_v1_configure(ls.layer_surface, 0, 0);
+    } else {
+        configureLayerSurface(ls);
+    }
+}
+
+fn handleLayerSurfaceDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
+    const ls: *LayerSurface = @fieldParentPtr("destroy", @as(*c.wl_listener, @ptrCast(listener)));
+    c.wl_list_remove(&ls.map.link);
+    c.wl_list_remove(&ls.unmap.link);
+    c.wl_list_remove(&ls.commit.link);
+    c.wl_list_remove(&ls.destroy.link);
+    server.gpa.destroy(ls);
 }
 
 // ---- XDG シェル (窓) ----
@@ -697,6 +824,9 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
         return;
     };
     c.wlr_scene_node_place_below(&toplevel.focus_rect.node, &toplevel.scene_tree.node);
+    // 窓とリングは常に上層レイヤーの下に保つ
+    c.wlr_scene_node_place_below(&toplevel.scene_tree.node, &server.layers_top_tree.node);
+    c.wlr_scene_node_place_below(&toplevel.focus_rect.node, &server.layers_top_tree.node);
 
     const surface: *c.wlr_surface = @ptrCast(base.surface);
     toplevel.map.notify = handleToplevelMap;
