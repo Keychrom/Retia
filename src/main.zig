@@ -835,9 +835,9 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
         return;
     };
     c.wlr_scene_node_place_below(&toplevel.focus_rect.node, &toplevel.scene_tree.node);
-    // 窓とリングは常に上層レイヤーの下に保つ
+    // 窓とリングは上層レイヤーの下に保つ。注意: ring を layers_top の下へ
+    // 追加で move すると窓の上に回ってしまう (リングが窓を隠す事故の原因)
     c.wlr_scene_node_place_below(&toplevel.scene_tree.node, &server.layers_top_tree.node);
-    c.wlr_scene_node_place_below(&toplevel.focus_rect.node, &server.layers_top_tree.node);
 
     const surface: *c.wlr_surface = @ptrCast(base.surface);
     toplevel.map.notify = handleToplevelMap;
