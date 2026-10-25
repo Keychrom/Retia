@@ -172,7 +172,7 @@ pub fn main() !void {
     // カーソル画像 (無いとポインタが不可視になる)
     server.xcursor_manager = c.wlr_xcursor_manager_create(null, 24) orelse return error.XcursorCreateFailed;
     _ = c.wlr_xcursor_manager_load(server.xcursor_manager, 1.0);
-    _ = c.wlr_xcursor_manager_set_cursor_image(server.xcursor_manager, "default", server.cursor);
+    c.wlr_cursor_set_xcursor(server.cursor, server.xcursor_manager, "default");
 
     server.seat = c.wlr_seat_create(server.display, "seat0") orelse return error.SeatCreateFailed;
     _ = c.wlr_seat_set_capabilities(server.seat, c.WL_SEAT_CAPABILITY_POINTER | c.WL_SEAT_CAPABILITY_KEYBOARD);
@@ -601,7 +601,7 @@ fn handleCursorMotion(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.
     const event: *c.wlr_pointer_motion_event = @ptrCast(@alignCast(data.?));
     const pointer: *c.wlr_pointer = @ptrCast(event.pointer);
     c.wlr_cursor_move(server.cursor, &pointer.base, event.delta_x, event.delta_y);
-    _ = c.wlr_xcursor_manager_set_cursor_image(server.xcursor_manager, "default", server.cursor);
+    c.wlr_cursor_set_xcursor(server.cursor, server.xcursor_manager, "default");
     processPointerMotion(event.time_msec);
 }
 
@@ -610,7 +610,7 @@ fn handleCursorMotionAbsolute(listener: [*c]c.wl_listener, data: ?*anyopaque) ca
     const event: *c.wlr_pointer_motion_absolute_event = @ptrCast(@alignCast(data.?));
     const pointer: *c.wlr_pointer = @ptrCast(event.pointer);
     c.wlr_cursor_warp_absolute(server.cursor, &pointer.base, event.x, event.y);
-    _ = c.wlr_xcursor_manager_set_cursor_image(server.xcursor_manager, "default", server.cursor);
+    c.wlr_cursor_set_xcursor(server.cursor, server.xcursor_manager, "default");
     processPointerMotion(event.time_msec);
 }
 
