@@ -159,7 +159,7 @@ pub fn main() !void {
     server.xdg_shell = c.wlr_xdg_shell_create(server.display, 6) orelse return error.XdgShellCreateFailed;
 
     server.cursor = c.wlr_cursor_create() orelse return error.CursorCreateFailed;
-    _ = c.wlr_cursor_attach_output_layout(server.cursor, server.layout);
+    _ = c.wlr_cursor_attach_output_layout(server.cursor, server.output_layout);
 
     server.seat = c.wlr_seat_create(server.display, "seat0") orelse return error.SeatCreateFailed;
     _ = c.wlr_seat_set_capabilities(server.seat, c.WL_SEAT_CAPABILITY_POINTER | c.WL_SEAT_CAPABILITY_KEYBOARD);
