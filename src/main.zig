@@ -910,7 +910,34 @@ fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
     _ = data;
     const toplevel: *Toplevel = @fieldParentPtr("map", @as(*c.wl_listener, @ptrCast(listener)));
     logInfo("toplevel mapped: {s}", .{outputName_toplevel(toplevel)});
+    dumpScene();
     focusToplevel(toplevel);
+}
+
+/// デバッグ: scene root の子ノードと窓の状態を吐く
+fn dumpScene() void {
+    var n: usize = 0;
+    var it = server.scene.tree.children;
+    while (it.prev != null) : (it = it.prev.?.*) {
+        // 簡易: 先頭から数えるのは難しいので link を数えるだけ
+        n += 1;
+        if (n > 20) break;
+    }
+    var wins: usize = 0;
+    for (server.toplevels.items) |t| {
+        wins += 1;
+        const s: *c.wlr_surface = @ptrCast(t.base.surface);
+        const has_buffer = s.current.buffer != null;
+        logInfo("win {s}: ws={d} enabled={any} mapped={any} buffer={any} size={d}x{d}", .{
+            outputName_toplevel(t), t.ws + 1,
+            t.scene_tree.node.enabled,
+            s.mapped,
+            has_buffer,
+            s.current.width,
+            s.current.height,
+        });
+    }
+    logInfo("scene children(links counted)={d} toplevels={d}", .{ n, wins });
 }
 
 fn handleToplevelCommit(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
