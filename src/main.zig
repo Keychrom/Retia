@@ -189,6 +189,8 @@ pub fn main() !void {
     c.wl_signal_add(&server.cursor.events.button, &server.cursor_button);
 
     _ = c.signal(c.SIGINT, handleSigint);
+    // fork した子 (kitty) を自動回収する (放置するとゾンビになる)
+    _ = c.signal(c.SIGCHLD, c.SIG_IGN);
 
     // リスナー登録を済ませてから start (start 時に new_output が飛ぶ)
     _ = c.wlr_backend_start(server.backend);
@@ -629,7 +631,25 @@ fn processPointerMotion(time_msec: u32) void {
 fn handleCursorButton(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_button_event = @ptrCast(@alignCast(data.?));
-    // クリックフォーカスは M2 (toplevel 一覧を持ってから)
+    if (event.state == c.WL_POINTER_BUTTON_STATE_PRESSED) {
+        // クリックフォーカス (SPEC §5: niri 慣習)。バッファノードの親ツリーに
+        // Toplevel を入れているので node_at から解決できる
+        var sx: f64 = 0;
+        var sy: f64 = 0;
+        const node_raw = c.wlr_scene_node_at(&server.scene.tree.node, server.cursor.x, server.cursor.y, &sx, &sy);
+        if (node_raw != null) {
+            const node: *c.wlr_scene_node = @ptrCast(node_raw);
+            if (node.type == c.WLR_SCENE_NODE_BUFFER) {
+                const buf: *c.wlr_scene_buffer = @ptrCast(node);
+                if (c.wlr_scene_surface_try_from_buffer(buf) != null) {
+                    const tree: *c.wlr_scene_tree = @ptrCast(node.parent);
+                    if (tree.node.data) |d| {
+                        focusToplevel(@ptrCast(@alignCast(d)));
+                    }
+                }
+            }
+        }
+    }
     _ = c.wlr_seat_pointer_notify_button(server.seat, event.time_msec, event.button, event.state);
 }
 
