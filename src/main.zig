@@ -163,13 +163,19 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
         }
         c.wlr_output_state_set_enabled(&state, true);
         if (!c.wlr_output_commit_state(output, &state)) {
-            logErr("failed to commit output state: {s}", .{std.mem.span(output.name)});
+            logErr("failed to commit output state: {s}", .{outputName(output)});
             return;
         }
     }
 
     _ = c.wlr_output_layout_add_auto(server.layout, output);
-    logInfo("output added: {s}", .{std.mem.span(output.name)});
+    logInfo("output added: {s}", .{outputName(output)});
+}
+
+/// 0.19 では output.name は NULL になりうる ("may be NULL")
+fn outputName(output: *c.wlr_output) []const u8 {
+    if (output.name) |n| return std.mem.span(n);
+    return "unknown";
 }
 
 // ---- 入力デバイス ----
