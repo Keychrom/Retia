@@ -123,7 +123,7 @@ pub fn build(b: *std.Build) void {
                 .{ xml, out_path },
             ) catch unreachable,
         });
-        gen_steps[gen_n] = gen.step;
+        gen_steps[gen_n] = &gen.step;
         gen_n += 1;
         if (gen_n == gen_steps.len) break;
     }
