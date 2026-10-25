@@ -58,7 +58,7 @@ pub fn Layout(comptime Window: type) type {
             return &self.columns.items[self.focused_column];
         }
 
-        pub fn focusedWindow(self: *Self) ?*Window {
+        pub fn focusedWindow(self: *Self) ?Window {
             if (self.columns.items.len == 0) return null;
             const col = self.focusedColumnPtr();
             if (col.windows.items.len == 0) return null;
@@ -69,7 +69,7 @@ pub fn Layout(comptime Window: type) type {
 
         /// 新規窓: フォーカス列の隣に新しい列として開く (niri 互換【決定】)。
         /// レイアウトが空のときは全面幅 (M1 からの見た目を維持)、 otherwise 0.5
-        pub fn addWindow(self: *Self, window: *Window) !void {
+        pub fn addWindow(self: *Self, window: Window) !void {
             const ratio: f32 = if (self.columns.items.len == 0) 1.0 else 0.5;
             var col = Column{ .width_ratio = ratio };
             try col.windows.append(self.allocator, window);
@@ -79,7 +79,7 @@ pub fn Layout(comptime Window: type) type {
         }
 
         /// 窓がどこかの列から消えたときに呼ぶ (close 等)。フォーカスを修復する。
-        pub fn removeWindow(self: *Self, window: *Window) void {
+        pub fn removeWindow(self: *Self, window: Window) void {
             for (self.columns.items, 0..) |*col, ci| {
                 for (col.windows.items, 0..) |w, wi| {
                     if (w != window) continue;
@@ -166,14 +166,14 @@ pub fn Layout(comptime Window: type) type {
         pub fn moveWindowUp(self: *Self) void {
             if (self.focused_window == 0) return;
             const col = self.focusedColumnPtr();
-            std.mem.swap(*Window, &col.windows.items[self.focused_window], &col.windows.items[self.focused_window - 1]);
+            std.mem.swap(Window, &col.windows.items[self.focused_window], &col.windows.items[self.focused_window - 1]);
             self.focused_window -= 1;
         }
 
         pub fn moveWindowDown(self: *Self) void {
             const col = self.focusedColumnPtr();
             if (self.focused_window + 1 >= col.windows.items.len) return;
-            std.mem.swap(*Window, &col.windows.items[self.focused_window], &col.windows.items[self.focused_window + 1]);
+            std.mem.swap(Window, &col.windows.items[self.focused_window], &col.windows.items[self.focused_window + 1]);
             self.focused_window += 1;
         }
 
@@ -292,7 +292,7 @@ pub fn Layout(comptime Window: type) type {
         }
 
         pub const WindowBox = struct {
-            window: *Window,
+            window: Window,
             x: i32,
             y: i32,
             w: i32,
@@ -332,12 +332,12 @@ const TestWindow = struct {
 };
 
 test "addWindow: niri 式にフォーカス列の隣へ新列" {
-    var a = testing.allocator;
+    const a = testing.allocator;
     var w1 = TestWindow{ .id = 1 };
     var w2 = TestWindow{ .id = 2 };
     var w3 = TestWindow{ .id = 3 };
 
-    var l = Layout(TestWindow).init(a);
+    var l = Layout(*TestWindow).init(a);
     defer l.deinit();
 
     try l.addWindow(&w1);
@@ -350,9 +350,9 @@ test "addWindow: niri 式にフォーカス列の隣へ新列" {
 }
 
 test "focus 移動は端で止まる" {
-    var a = testing.allocator;
+    const a = testing.allocator;
     var w1 = TestWindow{ .id = 1 };
-    var l = Layout(TestWindow).init(a);
+    var l = Layout(*TestWindow).init(a);
     defer l.deinit();
     try l.addWindow(&w1);
 
@@ -362,10 +362,10 @@ test "focus 移動は端で止まる" {
 }
 
 test "consumeOrExpelLeft: 左列 1 窓なら吸収" {
-    var a = testing.allocator;
+    const a = testing.allocator;
     var w1 = TestWindow{ .id = 1 };
     var w2 = TestWindow{ .id = 2 };
-    var l = Layout(TestWindow).init(a);
+    var l = Layout(*TestWindow).init(a);
     defer l.deinit();
     try l.addWindow(&w1);
     try l.addWindow(&w2); // [w1][w2] フォーカス=右
@@ -380,10 +380,10 @@ test "consumeOrExpelLeft: 左列 1 窓なら吸収" {
 }
 
 test "consumeOrExpelLeft: 左列なしなら expel (左へ新列)" {
-    var a = testing.allocator;
+    const a = testing.allocator;
     var w1 = TestWindow{ .id = 1 };
     var w2 = TestWindow{ .id = 2 };
-    var l = Layout(TestWindow).init(a);
+    var l = Layout(*TestWindow).init(a);
     defer l.deinit();
     try l.addWindow(&w1);
     try l.addWindow(&w2); // [w1][w2] フォーカス=col1(w2)
@@ -407,11 +407,11 @@ test "consumeOrExpelLeft: 左列なしなら expel (左へ新列)" {
 }
 
 test "removeWindow: フォーカス修復と空列の畳み" {
-    var a = testing.allocator;
+    const a = testing.allocator;
     var w1 = TestWindow{ .id = 1 };
     var w2 = TestWindow{ .id = 2 };
     var w3 = TestWindow{ .id = 3 };
-    var l = Layout(TestWindow).init(a);
+    var l = Layout(*TestWindow).init(a);
     defer l.deinit();
     try l.addWindow(&w1);
     try l.addWindow(&w2);
@@ -428,9 +428,9 @@ test "removeWindow: フォーカス修復と空列の畳み" {
 }
 
 test "cycleColumnWidth: 1/3 → 1/2 → 2/3 → 1/3" {
-    var a = testing.allocator;
+    const a = testing.allocator;
     var w1 = TestWindow{ .id = 1 };
-    var l = Layout(TestWindow).init(a);
+    var l = Layout(*TestWindow).init(a);
     defer l.deinit();
     try l.addWindow(&w1);
 
@@ -444,9 +444,9 @@ test "cycleColumnWidth: 1/3 → 1/2 → 2/3 → 1/3" {
 }
 
 test "geometry: 単窓は gap を除いて全面" {
-    var a = testing.allocator;
+    const a = testing.allocator;
     var w1 = TestWindow{ .id = 1 };
-    var l = Layout(TestWindow).init(a);
+    var l = Layout(*TestWindow).init(a);
     defer l.deinit();
     l.setUsableSize(1280, 720);
     try l.addWindow(&w1);
@@ -462,11 +462,11 @@ test "geometry: 単窓は gap を除いて全面" {
 }
 
 test "geometry: 3 列でスクロール target が clamp される" {
-    var a = testing.allocator;
+    const a = testing.allocator;
     var w1 = TestWindow{ .id = 1 };
     var w2 = TestWindow{ .id = 2 };
     var w3 = TestWindow{ .id = 3 };
-    var l = Layout(TestWindow).init(a);
+    var l = Layout(*TestWindow).init(a);
     defer l.deinit();
     l.setUsableSize(1280, 720);
     try l.addWindow(&w1);
