@@ -170,7 +170,7 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
     const output: *c.wlr_output = @ptrCast(@alignCast(data.?));
 
     // output に allocator/renderer を紐付ける。commit 前に一度必須 (tinywl と同じ)
-    c.wlr_output_init_render(output, server.allocator, server.renderer);
+    _ = c.wlr_output_init_render(output, server.allocator, server.renderer);
 
     // nested でもモードが渡されるが、無い場合 (headless 等) はカスタムモードを据える
     if (!output.enabled) {
