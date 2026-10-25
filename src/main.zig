@@ -49,6 +49,9 @@ fn logErr(comptime fmt: []const u8, args: anytype) void {
 
 const Toplevel = struct {
     xdg_surface: *c.wlr_xdg_surface,
+    /// xdg_surface.toplevel は匿名 union で cimport から直接触れないため、
+    /// 生成時に accessor で解決して保持する
+    xdg_toplevel: *c.wlr_xdg_toplevel,
     scene_tree: *c.wlr_scene_tree,
 
     map: c.wl_listener,
@@ -159,13 +162,13 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
         }
         c.wlr_output_state_set_enabled(&state, true);
         if (!c.wlr_output_commit_state(output, &state)) {
-            logErr("failed to commit output state: {s}", .{std.mem.sliceTo(&output.name, 0)});
+            logErr("failed to commit output state: {s}", .{std.mem.span(output.name)});
             return;
         }
     }
 
     _ = c.wlr_output_layout_add_auto(server.layout, output);
-    logInfo("output added: {s}", .{std.mem.sliceTo(&output.name, 0)});
+    logInfo("output added: {s}", .{std.mem.span(output.name)});
 }
 
 // ---- 入力デバイス ----
@@ -175,7 +178,8 @@ fn handleNewInput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) v
     const device: *c.wlr_input_device = @ptrCast(@alignCast(data.?));
 
     if (device.type == c.WLR_INPUT_DEVICE_KEYBOARD) {
-        if (device.keyboard) |wlr_kb| handleNewKeyboard(wlr_kb);
+        // 0.19 からは union でなく from_input_device() で専用型へ変換する
+        if (c.wlr_keyboard_from_input_device(device)) |wlr_kb| handleNewKeyboard(wlr_kb);
     } else if (device.type == c.WLR_INPUT_DEVICE_POINTER) {
         _ = c.wlr_cursor_attach_input_device(server.cursor, device);
     }
@@ -229,7 +233,7 @@ fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
             if (sym == c.XKB_KEY_q) {
                 // Super+Q: フォーカス窓を閉じる
                 if (server.focused) |t| {
-                    _ = c.wlr_xdg_toplevel_send_close(t.xdg_surface.toplevel.?);
+                    _ = c.wlr_xdg_toplevel_send_close(t.xdg_toplevel);
                 }
                 return;
             } else if (sym == c.XKB_KEY_t) {
@@ -275,11 +279,13 @@ fn handleNewXdgSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(
     _ = listener;
     const xdg_surface: *c.wlr_xdg_surface = @ptrCast(@alignCast(data.?));
     if (xdg_surface.role != c.WLR_XDG_SURFACE_ROLE_TOPLEVEL) return;
-    const toplevel_handle = xdg_surface.toplevel orelse return;
+    // 匿名 union (xdg_surface.toplevel) は cimport から直接触れないため accessor を使う
+    const toplevel_handle = c.wlr_xdg_toplevel_try_from_wlr_surface(xdg_surface.surface) orelse return;
 
     const toplevel = server.gpa.create(Toplevel) catch return;
     toplevel.* = .{
         .xdg_surface = xdg_surface,
+        .xdg_toplevel = toplevel_handle,
         // scene ノードは map 前に作れる。unmap 中は自動で隠れる
         .scene_tree = c.wlr_scene_xdg_surface_create(&server.scene.tree, xdg_surface) orelse {
             server.gpa.destroy(toplevel);
@@ -311,7 +317,7 @@ fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
     // M1 レイアウト: レイアウト全面 (M2 でスクロール列に置き換え)
     const size = layoutSize();
     _ = c.wlr_scene_node_set_position(&toplevel.scene_tree.node, 0, 0);
-    _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_surface.toplevel.?, size.w, size.h);
+    _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
     _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_surface);
 
     focusToplevel(toplevel);
@@ -340,8 +346,8 @@ fn handleToplevelRequestMaximize(listener: [*c]c.wl_listener, data: ?*anyopaque)
     _ = data;
     const toplevel: *Toplevel = @fieldParentPtr("request_maximize", listener.?);
     const size = layoutSize();
-    _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_surface.toplevel.?, size.w, size.h);
-    _ = c.wlr_xdg_toplevel_set_maximized(toplevel.xdg_surface.toplevel.?, true);
+    _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
+    _ = c.wlr_xdg_toplevel_set_maximized(toplevel.xdg_toplevel, true);
     _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_surface);
 }
 
@@ -349,8 +355,8 @@ fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaqu
     _ = data;
     const toplevel: *Toplevel = @fieldParentPtr("request_fullscreen", listener.?);
     const size = layoutSize();
-    _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_surface.toplevel.?, size.w, size.h);
-    _ = c.wlr_xdg_toplevel_set_fullscreen(toplevel.xdg_surface.toplevel.?, true);
+    _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
+    _ = c.wlr_xdg_toplevel_set_fullscreen(toplevel.xdg_toplevel, true);
     _ = c.wlr_xdg_surface_schedule_configure(toplevel.xdg_surface);
 }
 
@@ -361,7 +367,7 @@ fn focusToplevel(toplevel: *Toplevel) void {
         }
     }
     server.focused = toplevel;
-    _ = c.wlr_xdg_toplevel_set_activated(toplevel.xdg_surface.toplevel.?, true);
+    _ = c.wlr_xdg_toplevel_set_activated(toplevel.xdg_toplevel, true);
     _ = c.wlr_seat_keyboard_notify_enter(server.seat, toplevel.xdg_surface.surface, null, 0, null);
 }
 
@@ -379,14 +385,14 @@ fn layoutSize() struct { w: u32, h: u32 } {
 fn handleCursorMotion(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_motion_event = @ptrCast(@alignCast(data.?));
-    c.wlr_cursor_move(server.cursor, &event.pointer.base, event.delta_x, event.delta_y);
+    c.wlr_cursor_move(server.cursor, &event.pointer.?.base, event.delta_x, event.delta_y);
     processPointerMotion(event.time_msec);
 }
 
 fn handleCursorMotionAbsolute(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_motion_absolute_event = @ptrCast(@alignCast(data.?));
-    c.wlr_cursor_warp_absolute(server.cursor, &event.pointer.base, event.x, event.y);
+    c.wlr_cursor_warp_absolute(server.cursor, &event.pointer.?.base, event.x, event.y);
     processPointerMotion(event.time_msec);
 }
 
@@ -409,7 +415,7 @@ fn handleCursorButton(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.
     _ = listener;
     const event: *c.wlr_pointer_button_event = @ptrCast(@alignCast(data.?));
     // クリックフォーカスは M2 (toplevel 一覧を持ってから)
-    c.wlr_seat_pointer_notify_button(server.seat, event.time_msec, event.button, event.state);
+    _ = c.wlr_seat_pointer_notify_button(server.seat, event.time_msec, event.button, event.state);
 }
 
 // ---- 終了 ----
