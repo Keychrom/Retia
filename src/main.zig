@@ -70,6 +70,12 @@ const Keyboard = struct {
     destroy: c.wl_listener,
 };
 
+const Output = struct {
+    wlr_output: *c.wlr_output,
+    frame: c.wl_listener,
+    destroy: c.wl_listener,
+};
+
 const Server = struct {
     gpa: std.mem.Allocator,
     display: *c.wl_display = undefined,
@@ -167,28 +173,61 @@ pub fn main() !void {
 
 fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
-    const output: *c.wlr_output = @ptrCast(@alignCast(data.?));
+    const wlr_output: *c.wlr_output = @ptrCast(@alignCast(data.?));
 
     // output に allocator/renderer を紐付ける。commit 前に一度必須 (tinywl と同じ)
-    _ = c.wlr_output_init_render(output, server.allocator, server.renderer);
+    _ = c.wlr_output_init_render(wlr_output, server.allocator, server.renderer);
 
     // nested でもモードが渡されるが、無い場合 (headless 等) はカスタムモードを据える
-    if (!output.enabled) {
+    if (!wlr_output.enabled) {
         var state: c.wlr_output_state = undefined;
         c.wlr_output_state_init(&state);
         defer c.wlr_output_state_finish(&state);
-        if (output.current_mode == null) {
+        if (wlr_output.current_mode == null) {
             c.wlr_output_state_set_custom_mode(&state, 1280, 720, 0);
         }
         c.wlr_output_state_set_enabled(&state, true);
-        if (!c.wlr_output_commit_state(output, &state)) {
-            logErr("failed to commit output state: {s}", .{outputName(output)});
+        if (!c.wlr_output_commit_state(wlr_output, &state)) {
+            logErr("failed to commit output state: {s}", .{outputName(wlr_output)});
             return;
         }
     }
 
-    _ = c.wlr_output_layout_add_auto(server.layout, output);
-    logInfo("output added: {s}", .{outputName(output)});
+    const output = server.gpa.create(Output) catch return;
+    output.* = .{
+        .wlr_output = wlr_output,
+        .frame = undefined,
+        .destroy = undefined,
+    };
+    output.frame.notify = handleOutputFrame;
+    c.wl_signal_add(&wlr_output.events.frame, &output.frame);
+    output.destroy.notify = handleOutputDestroy;
+    c.wl_signal_add(&wlr_output.events.destroy, &output.destroy);
+
+    _ = c.wlr_output_layout_add_auto(server.layout, wlr_output);
+    // 最初のフレームを要求 (以後は commit ごとに schedule する連続描画)
+    c.wlr_output_schedule_frame(wlr_output);
+    logInfo("output added: {s}", .{outputName(wlr_output)});
+}
+
+fn handleOutputFrame(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
+    const output: *Output = @fieldParentPtr("frame", @as(*c.wl_listener, @ptrCast(listener)));
+    const scene_output = c.wlr_scene_get_scene_output(server.scene, output.wlr_output);
+    if (scene_output != null) {
+        // scene graph の内容を output に commit する
+        _ = c.wlr_scene_output_commit(scene_output, null);
+    }
+    // M1 は連続描画 (M2 で damage ベースに最適化)
+    c.wlr_output_schedule_frame(output.wlr_output);
+}
+
+fn handleOutputDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
+    const output: *Output = @fieldParentPtr("destroy", @as(*c.wl_listener, @ptrCast(listener)));
+    c.wl_list_remove(&output.frame.link);
+    c.wl_list_remove(&output.destroy.link);
+    server.gpa.destroy(output);
 }
 
 /// 0.19 では output.name は NULL になりうる ("may be NULL")
