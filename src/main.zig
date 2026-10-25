@@ -841,11 +841,12 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     base.data = toplevel.scene_tree;
 
     // フォーカスリング: 窓の背面に置く色付き矩形
-    const dim: [4]f32 = .{ 0.31, 0.31, 0.31, 1.0 };
+    const dim: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 };
     toplevel.focus_rect = c.wlr_scene_rect_create(&server.scene.tree, 10, 10, &dim) orelse {
         server.gpa.destroy(toplevel);
         return;
     };
+    c.wlr_scene_node_set_enabled(&toplevel.focus_rect.node, false);
     c.wlr_scene_node_place_below(&toplevel.focus_rect.node, &toplevel.scene_tree.node);
     // 窓とリングは上層レイヤーの下に保つ。注意: ring を layers_top の下へ
     // 追加で move すると窓の上に回ってしまう (リングが窓を隠す事故の原因)
