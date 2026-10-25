@@ -178,10 +178,14 @@ const Server = struct {
         return .{ .cols = self.activeLayout().columns.items.len, .wins = wins };
     }
 
-    /// レイアウト反映を要求する (実際の適用は次フレーム。フレーム内で直接
-    /// 座標を書き換えると窓の描画が壊れるため)
+    /// レイアウト反映を要求する (実際の適用は次フレーム)。dirty だけだと
+    /// damage が無くてフレームが来ず循環待ちになるため、1フレームだけ能動的に
+    /// 要求する (連続 schedule ではないので OOM の再来は無い)
     pub fn applyLayout(self: *Server) void {
         self.dirty_layout = true;
+        for (self.outputs.items) |output| {
+            c.wlr_output_schedule_frame(output.wlr_output);
+        }
     }
 
     pub fn applyLayoutNow(self: *Server) void {
