@@ -15,8 +15,9 @@ pub fn build(b: *std.Build) void {
     });
 
     // wlroots は C ライブラリ。パッケージ名はバージョン付き (wlroots-0.19) なので注意
+    // b.run() の出力には末尾の改行が含まれるため、区切りに改行も含める
     const cflags = b.run(&.{ "pkg-config", "--cflags", "wlroots-0.19" });
-    var cflags_it = std.mem.tokenizeScalar(u8, cflags, ' ');
+    var cflags_it = std.mem.tokenizeAny(u8, cflags, " \t\r\n");
     while (cflags_it.next()) |flag| {
         if (std.mem.startsWith(u8, flag, "-I")) {
             exe.root_module.addIncludePath(.{ .cwd_relative = flag[2..] });
@@ -24,7 +25,7 @@ pub fn build(b: *std.Build) void {
     }
 
     const libs = b.run(&.{ "pkg-config", "--libs", "wlroots-0.19" });
-    var libs_it = std.mem.tokenizeScalar(u8, libs, ' ');
+    var libs_it = std.mem.tokenizeAny(u8, libs, " \t\r\n");
     while (libs_it.next()) |flag| {
         if (std.mem.startsWith(u8, flag, "-l")) {
             exe.root_module.linkSystemLibrary(flag[2..], .{});
