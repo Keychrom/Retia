@@ -891,8 +891,8 @@ fn processPointerMotion(time_msec: u32) void {
         if (server.grabbed) |t| {
             const vx: i32 = @intFromFloat(server.viewport_x);
             if (server.cursor_mode == .move) {
-                t.fx = @as(i32, @intFromFloat(server.cursor.x)) + server.grab_x - vx;
-                t.fy = @as(i32, @intFromFloat(server.cursor.y)) + server.grab_y;
+                t.fx = @as(i32, @intFromFloat(server.cursor.x)) + @as(i32, @intFromFloat(server.grab_x)) - vx;
+                t.fy = @as(i32, @intFromFloat(server.cursor.y)) + @as(i32, @intFromFloat(server.grab_y));
             } else {
                 t.fw = @max(@as(i32, @intFromFloat(server.cursor.x)) - t.fx + vx, 100);
                 t.fh = @max(@as(i32, @intFromFloat(server.cursor.y)) - t.fy, 100);
@@ -937,11 +937,11 @@ fn handleCursorButton(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.
             const t = target.?;
             const vx: i32 = @intFromFloat(server.viewport_x);
             server.grabbed = t;
-            if (event.button == c.BTN_LEFT) {
+            if (event.button == 0x110) { // BTN_LEFT
                 server.cursor_mode = .move;
                 server.grab_x = @floatFromInt(t.fx - vx - @as(i32, @intFromFloat(server.cursor.x)));
                 server.grab_y = @floatFromInt(t.fy - @as(i32, @intFromFloat(server.cursor.y)));
-            } else if (event.button == c.BTN_RIGHT) {
+            } else if (event.button == 0x111) { // BTN_RIGHT
                 server.cursor_mode = .resize;
                 server.grab_w = t.fw;
                 server.grab_h = t.fh;
