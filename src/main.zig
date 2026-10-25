@@ -84,6 +84,7 @@ const Server = struct {
     renderer: *c.wlr_renderer = undefined,
     allocator: *c.wlr_allocator = undefined,
     scene: *c.wlr_scene = undefined,
+    scene_output_layout: *c.wlr_scene_output_layout = undefined,
     layout: *c.wlr_output_layout = undefined,
     cursor: *c.wlr_cursor = undefined,
     seat: *c.wlr_seat = undefined,
@@ -130,7 +131,7 @@ pub fn main() !void {
 
     server.layout = c.wlr_output_layout_create(server.display) orelse return error.OutputLayoutCreateFailed;
     server.scene = c.wlr_scene_create() orelse return error.SceneCreateFailed;
-    _ = c.wlr_scene_attach_output_layout(server.scene, server.layout);
+    server.scene_output_layout = c.wlr_scene_attach_output_layout(server.scene, server.layout) orelse return error.SceneAttachFailed;
 
     server.xdg_shell = c.wlr_xdg_shell_create(server.display, 6) orelse return error.XdgShellCreateFailed;
 
@@ -205,9 +206,15 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
     output.destroy.notify = handleOutputDestroy;
     c.wl_signal_add(&wlr_output.events.destroy, &output.destroy);
 
-    _ = c.wlr_output_layout_add_auto(server.layout, wlr_output);
-    const so = c.wlr_scene_get_scene_output(server.scene, wlr_output);
-    logInfo("output added: {s} scene_output={s}", .{ outputName(wlr_output), if (so != null) "yes" else "NULL" });
+    // scene_output は自動では作られない: 作成して layout のエントリに紐付ける
+    const lo = c.wlr_output_layout_add_auto(server.layout, wlr_output);
+    const so = c.wlr_scene_output_create(server.scene, wlr_output) orelse {
+        logErr("failed to create scene output", .{});
+        return;
+    };
+    c.wlr_scene_output_layout_add_output(server.scene_output_layout, lo, so);
+    const so_check = c.wlr_scene_get_scene_output(server.scene, wlr_output);
+    logInfo("output added: {s} scene_output={s}", .{ outputName(wlr_output), if (so_check != null) "yes" else "NULL" });
 }
 
 fn handleOutputFrame(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
@@ -232,6 +239,10 @@ fn handleOutputDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(
     const output: *Output = @fieldParentPtr("destroy", @as(*c.wl_listener, @ptrCast(listener)));
     c.wl_list_remove(&output.frame.link);
     c.wl_list_remove(&output.destroy.link);
+    // scene 側の output も明示的に破棄する
+    if (c.wlr_scene_get_scene_output(server.scene, output.wlr_output)) |so| {
+        c.wlr_scene_output_destroy(so);
+    }
     server.gpa.destroy(output);
 }
 
