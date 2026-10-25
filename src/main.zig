@@ -31,6 +31,7 @@ const c = @cImport({
     @cInclude("wlr/types/wlr_output.h");
     @cInclude("wlr/types/wlr_output_layout.h");
     @cInclude("wlr/types/wlr_cursor.h");
+    @cInclude("wlr/types/wlr_xcursor_manager.h");
     @cInclude("wlr/types/wlr_keyboard.h");
     @cInclude("wlr/types/wlr_seat.h");
     @cInclude("wlr/types/wlr_scene.h");
@@ -91,6 +92,7 @@ const Server = struct {
     scene_output_layout: *c.wlr_scene_output_layout = undefined,
     output_layout: *c.wlr_output_layout = undefined,
     cursor: *c.wlr_cursor = undefined,
+    xcursor_manager: *c.wlr_xcursor_manager = undefined,
     seat: *c.wlr_seat = undefined,
     xdg_shell: *c.wlr_xdg_shell = undefined,
     socket_name: [:0]const u8 = undefined,
@@ -167,6 +169,10 @@ pub fn main() !void {
 
     server.cursor = c.wlr_cursor_create() orelse return error.CursorCreateFailed;
     _ = c.wlr_cursor_attach_output_layout(server.cursor, server.output_layout);
+    // カーソル画像 (無いとポインタが不可視になる)
+    server.xcursor_manager = c.wlr_xcursor_manager_create(null, 24) orelse return error.XcursorCreateFailed;
+    _ = c.wlr_xcursor_manager_load(server.xcursor_manager, 1.0);
+    _ = c.wlr_xcursor_manager_set_cursor_image(server.xcursor_manager, "default", server.cursor);
 
     server.seat = c.wlr_seat_create(server.display, "seat0") orelse return error.SeatCreateFailed;
     _ = c.wlr_seat_set_capabilities(server.seat, c.WL_SEAT_CAPABILITY_POINTER | c.WL_SEAT_CAPABILITY_KEYBOARD);
@@ -595,6 +601,7 @@ fn handleCursorMotion(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.
     const event: *c.wlr_pointer_motion_event = @ptrCast(@alignCast(data.?));
     const pointer: *c.wlr_pointer = @ptrCast(event.pointer);
     c.wlr_cursor_move(server.cursor, &pointer.base, event.delta_x, event.delta_y);
+    _ = c.wlr_xcursor_manager_set_cursor_image(server.xcursor_manager, "default", server.cursor);
     processPointerMotion(event.time_msec);
 }
 
@@ -603,6 +610,7 @@ fn handleCursorMotionAbsolute(listener: [*c]c.wl_listener, data: ?*anyopaque) ca
     const event: *c.wlr_pointer_motion_absolute_event = @ptrCast(@alignCast(data.?));
     const pointer: *c.wlr_pointer = @ptrCast(event.pointer);
     c.wlr_cursor_warp_absolute(server.cursor, &pointer.base, event.x, event.y);
+    _ = c.wlr_xcursor_manager_set_cursor_image(server.xcursor_manager, "default", server.cursor);
     processPointerMotion(event.time_msec);
 }
 
