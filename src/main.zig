@@ -199,7 +199,7 @@ fn handleNewKeyboard(wlr_kb: *c.wlr_keyboard) void {
     defer c.xkb_context_unref(ctx);
     var rules = std.mem.zeroes(c.xkb_rule_names);
     const keymap = c.xkb_keymap_new_from_names(ctx, &rules, c.XKB_KEYMAP_COMPILE_NO_FLAGS) orelse return;
-    c.wlr_keyboard_set_keymap(wlr_kb, keymap) catch {};
+    _ = c.wlr_keyboard_set_keymap(wlr_kb, keymap);
     c.xkb_keymap_unref(keymap);
     _ = c.wlr_keyboard_set_repeat_info(wlr_kb, 25, 600);
 
@@ -216,13 +216,13 @@ fn handleNewKeyboard(wlr_kb: *c.wlr_keyboard) void {
 
 fn handleKeyboardModifiers(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const kb: *Keyboard = @fieldParentPtr("modifiers", @ptrCast(listener));
+    const kb: *Keyboard = @fieldParentPtr("modifiers", @as(*c.wl_listener, @ptrCast(listener)));
     c.wlr_seat_set_keyboard(server.seat, kb.wlr_keyboard);
     c.wlr_seat_keyboard_notify_modifiers(server.seat, &kb.wlr_keyboard.modifiers);
 }
 
 fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
-    const kb: *Keyboard = @fieldParentPtr("key", @ptrCast(listener));
+    const kb: *Keyboard = @fieldParentPtr("key", @as(*c.wl_listener, @ptrCast(listener)));
     const event: *c.wlr_keyboard_key_event = @ptrCast(@alignCast(data.?));
     const wlr_kb = kb.wlr_keyboard;
 
@@ -253,7 +253,7 @@ fn handleKeyboardKey(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
 
 fn handleKeyboardDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const kb: *Keyboard = @fieldParentPtr("destroy", @ptrCast(listener));
+    const kb: *Keyboard = @fieldParentPtr("destroy", @as(*c.wl_listener, @ptrCast(listener)));
     c.wl_list_remove(&kb.modifiers.link);
     c.wl_list_remove(&kb.key.link);
     c.wl_list_remove(&kb.destroy.link);
@@ -314,7 +314,7 @@ fn handleNewXdgSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(
 
 fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("map", @ptrCast(listener));
+    const toplevel: *Toplevel = @fieldParentPtr("map", @as(*c.wl_listener, @ptrCast(listener)));
 
     // M1 レイアウト: レイアウト全面 (M2 でスクロール列に置き換え)
     const size = layoutSize();
@@ -327,13 +327,13 @@ fn handleToplevelMap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c
 
 fn handleToplevelUnmap(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("unmap", @ptrCast(listener));
+    const toplevel: *Toplevel = @fieldParentPtr("unmap", @as(*c.wl_listener, @ptrCast(listener)));
     if (server.focused == toplevel) server.focused = null;
 }
 
 fn handleToplevelDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("destroy", @ptrCast(listener));
+    const toplevel: *Toplevel = @fieldParentPtr("destroy", @as(*c.wl_listener, @ptrCast(listener)));
     c.wl_list_remove(&toplevel.map.link);
     c.wl_list_remove(&toplevel.unmap.link);
     c.wl_list_remove(&toplevel.destroy.link);
@@ -346,7 +346,7 @@ fn handleToplevelDestroy(listener: [*c]c.wl_listener, data: ?*anyopaque) callcon
 /// 最大化/フルスクリーン要求は M1 では全部「レイアウト全面」で応える
 fn handleToplevelRequestMaximize(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("request_maximize", @ptrCast(listener));
+    const toplevel: *Toplevel = @fieldParentPtr("request_maximize", @as(*c.wl_listener, @ptrCast(listener)));
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_maximized(toplevel.xdg_toplevel, true);
@@ -355,7 +355,7 @@ fn handleToplevelRequestMaximize(listener: [*c]c.wl_listener, data: ?*anyopaque)
 
 fn handleToplevelRequestFullscreen(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
-    const toplevel: *Toplevel = @fieldParentPtr("request_fullscreen", @ptrCast(listener));
+    const toplevel: *Toplevel = @fieldParentPtr("request_fullscreen", @as(*c.wl_listener, @ptrCast(listener)));
     const size = layoutSize();
     _ = c.wlr_xdg_toplevel_set_size(toplevel.xdg_toplevel, size.w, size.h);
     _ = c.wlr_xdg_toplevel_set_fullscreen(toplevel.xdg_toplevel, true);
