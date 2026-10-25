@@ -444,7 +444,9 @@ fn spawnTerminal() void {
     // C の fork/exec を使う (std.process は Zig バージョン間で変わりやすいため)
     const pid = c.fork();
     if (pid == 0) {
-        // 子プロセス: WAYLAND_DISPLAY は親で setenv 済み。失敗したら _exit で落とす
+        // VirtualBox SVGA3D の dmabuf インポートが不安定 (15秒程度で壊れる) ため、
+        // kitty をソフトウェアレンダリングで動かす。実機 (M3) では外す想定
+        _ = c.setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
         _ = c.execlp("kitty", "kitty", @as(?*const anyopaque, null));
         logErr("exec kitty failed", .{});
         c._exit(1);
