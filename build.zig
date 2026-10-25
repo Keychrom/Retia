@@ -62,13 +62,15 @@ pub fn build(b: *std.Build) void {
     ) catch unreachable;
     const refs = b.run(&.{ "sh", "-c", grep_cmd });
 
-    // 注: std.posix.getenv は Linux 専用。コンポジタのクロスビルドは想定しない
-    const home: []const u8 = std.posix.getenv("HOME") orelse "";
     const wlr_protocol_dir = b.option(
         []const u8,
         "wlroots-protocol-dir",
         "wlroots ソースツリーの protocol/ ディレクトリ (既定: $HOME/src/wlroots/protocol)",
-    ) orelse std.fmt.allocPrint(b.allocator, "{s}/src/wlroots/protocol", .{home}) catch unreachable;
+    ) orelse std.mem.trim(
+        u8,
+        b.run(&.{ "sh", "-c", "echo $HOME/src/wlroots/protocol" }),
+        " \t\r\n",
+    );
 
     const wl_protocols_dir = std.mem.trim(
         u8,

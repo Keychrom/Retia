@@ -248,15 +248,16 @@ fn handleKeyboardDestroy(listener: *c.wl_listener, data: ?*anyopaque) callconv(.
 }
 
 fn spawnTerminal() void {
-    var env = std.process.getEnvMap(server.gpa) catch return;
-    defer env.deinit();
-    env.put("WAYLAND_DISPLAY", server.socket_name) catch return;
-
-    var child = std.process.Child.init(&.{"kitty"}, server.gpa);
-    child.env_map = &env;
-    child.spawn() catch {
-        c.wlr_log(c.WLR_ERR, "failed to spawn kitty");
-    };
+    // C の fork/exec を使う (std.process は Zig バージョン間で変わりやすいため)
+    const pid = c.fork();
+    if (pid == 0) {
+        // 子プロセス: WAYLAND_DISPLAY は親で setenv 済み。失敗したら _exit で落とす
+        _ = c.execlp("kitty", "kitty", @as(?*const anyopaque, null));
+        c.wlr_log(c.WLR_ERR, "exec kitty failed");
+        c._exit(1);
+    } else if (pid < 0) {
+        c.wlr_log(c.WLR_ERR, "fork failed");
+    }
 }
 
 // ---- XDG シェル (窓) ----
@@ -369,14 +370,14 @@ fn layoutSize() struct { w: u32, h: u32 } {
 fn handleCursorMotion(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_motion_event = @ptrCast(@alignCast(data.?));
-    c.wlr_cursor_move(server.cursor, event.pointer.base.device, event.delta_x, event.delta_y);
+    c.wlr_cursor_move(server.cursor, &event.pointer.base, event.delta_x, event.delta_y);
     processPointerMotion(event.time_msec);
 }
 
 fn handleCursorMotionAbsolute(listener: *c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = listener;
     const event: *c.wlr_pointer_motion_absolute_event = @ptrCast(@alignCast(data.?));
-    c.wlr_cursor_warp_absolute(server.cursor, event.pointer.base.device, event.x, event.y);
+    c.wlr_cursor_warp_absolute(server.cursor, &event.pointer.base, event.x, event.y);
     processPointerMotion(event.time_msec);
 }
 
