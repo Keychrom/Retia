@@ -38,6 +38,7 @@ const c = @cImport({
     @cInclude("wlr/types/wlr_xdg_shell.h");
     @cInclude("wlr/types/wlr_layer_shell_v1.h");
     @cInclude("wlr/types/wlr_screencopy_v1.h");
+    @cInclude("wlr/types/wlr_xdg_output_v1.h");
     @cInclude("wlr/util/log.h");
 });
 
@@ -276,6 +277,8 @@ pub fn main() !void {
 
     // スクリーンショット (grim 用。デバッグとユーザー機能の両方)
     _ = c.wlr_screencopy_manager_v1_create(server.display);
+    // 出力メタデータ (grim/waybar 等が位置とスケールを知るのに必要)
+    _ = c.wlr_xdg_output_manager_v1_create(server.display, server.output_layout);
 
     server.cursor = c.wlr_cursor_create() orelse return error.CursorCreateFailed;
     _ = c.wlr_cursor_attach_output_layout(server.cursor, server.output_layout);
