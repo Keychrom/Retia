@@ -366,7 +366,7 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
     const lo = c.wlr_output_layout_add_auto(server.output_layout, wlr_output);
     // wl_output グローバルを広告する (bemenu 等、出力サイズを必要とするクライアント用。
     // 呼ばないと bind が NULL のまま落ちる)
-    _ = c.wlr_output_create_global(wlr_output);
+    c.wlr_output_create_global(wlr_output, server.display);
     const so = c.wlr_scene_output_create(server.scene, wlr_output) orelse {
         logErr("failed to create scene output", .{});
         return;
