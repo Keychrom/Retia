@@ -151,4 +151,16 @@ pub fn build(b: *std.Build) void {
     }
 
     b.installArtifact(exe);
+
+    // レイアウトエンジンのヘッドレステスト (zig build test)
+    const test_step = b.step("test", "Run layout engine tests");
+    const layout_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/layout/layout.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_layout_tests = b.addRunArtifact(layout_tests);
+    test_step.dependOn(&run_layout_tests.step);
 }
