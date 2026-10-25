@@ -146,6 +146,8 @@ const Server = struct {
     active_ws: usize = 0,
     toplevels: std.ArrayList(*Toplevel) = .empty,
     viewport_x: f64 = 0,
+    /// フレームハンドラでの applyLayout 反映用 (イベント側で立てる)
+    dirty_layout: bool = false,
     outputs: std.ArrayList(*Output) = .empty,
     cursor_mode: CursorMode = .passthrough,
     grabbed: ?*Toplevel = null,
@@ -175,8 +177,13 @@ const Server = struct {
         return .{ .cols = self.activeLayout().columns.items.len, .wins = wins };
     }
 
-    /// レイアウトエンジンの状態を scene node に反映する (呼び出し頻度高・軽量)
+    /// レイアウト反映を要求する (実際の適用は次フレーム。フレーム内で直接
+    /// 座標を書き換えると窓の描画が壊れるため)
     pub fn applyLayout(self: *Server) void {
+        self.dirty_layout = true;
+    }
+
+    pub fn applyLayoutNow(self: *Server) void {
         const size = layoutSize();
         for (&self.workspaces) |*ws| ws.setUsableSize(size.w, size.h);
         const l = self.activeLayout();
@@ -398,7 +405,12 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
 fn handleOutputFrame(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
     _ = data;
     const output: *Output = @fieldParentPtr("frame", @as(*c.wl_listener, @ptrCast(listener)));
-    server.applyLayout();
+    // 注: ここで applyLayout を毎フレーム呼ぶと窓の描画が壊れる (検証済み)。
+    // レイアウト反映はイベント駆動のみ
+    if (server.dirty_layout) {
+        server.dirty_layout = false;
+        server.applyLayoutNow();
+    }
     const scene_output = c.wlr_scene_get_scene_output(server.scene, output.wlr_output);
     if (scene_output) |so| {
         // scene graph の内容を output に commit する。
