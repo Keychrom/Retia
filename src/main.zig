@@ -58,6 +58,8 @@ const Toplevel = struct {
     /// xdg_toplevel.base は [*c] なので単一ポインタ化して保持する
     base: *c.wlr_xdg_surface,
     scene_tree: *c.wlr_scene_tree,
+    /// フォーカス表示用の枠 (窓の背面に置く)
+    focus_rect: *c.wlr_scene_rect,
 
     map: c.wl_listener,
     unmap: c.wl_listener,
@@ -124,6 +126,12 @@ const Server = struct {
             if (t.base.initial_commit) {
                 _ = c.wlr_xdg_toplevel_set_size(t.xdg_toplevel, box.w, box.h);
             }
+            // フォーカスリング: フォーカス窓はアクセント色
+            const is_focused = server.focused == t;
+            const color: [4]f32 = if (is_focused) .{ 0.5, 0.78, 1.0, 1.0 } else .{ 0.31, 0.31, 0.31, 1.0 };
+            c.wlr_scene_rect_set_color(t.focus_rect, &color);
+            c.wlr_scene_rect_set_size(t.focus_rect, box.w + 4, box.h + 4);
+            _ = c.wlr_scene_node_set_position(&t.focus_rect.node, box.x - vx - 2, box.y - 2);
         }
     }
 };
@@ -502,6 +510,14 @@ fn handleNewXdgToplevel(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv
     // popup の親解決用 (M2 で popup を扱うときに使う)
     base.data = toplevel.scene_tree;
 
+    // フォーカスリング: 窓の背面に置く色付き矩形
+    const dim: [4]f32 = .{ 0.31, 0.31, 0.31, 1.0 };
+    toplevel.focus_rect = c.wlr_scene_rect_create(&server.scene.tree, 10, 10, &dim) orelse {
+        server.gpa.destroy(toplevel);
+        return;
+    };
+    c.wlr_scene_node_place_below(&toplevel.focus_rect.node, &toplevel.scene_tree.node);
+
     const surface: *c.wlr_surface = @ptrCast(base.surface);
     toplevel.map.notify = handleToplevelMap;
     c.wl_signal_add(&surface.events.map, &toplevel.map);
@@ -590,6 +606,7 @@ fn focusToplevel(toplevel: *Toplevel) void {
     _ = c.wlr_xdg_toplevel_set_activated(toplevel.xdg_toplevel, true);
     const surface: *c.wlr_surface = @ptrCast(toplevel.base.surface);
     _ = c.wlr_seat_keyboard_notify_enter(server.seat, surface, null, 0, null);
+    server.applyLayout();
 }
 
 fn layoutSize() struct { w: i32, h: i32 } {
@@ -666,9 +683,16 @@ fn handleCursorButton(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.
             if (node.type == c.WLR_SCENE_NODE_BUFFER) {
                 const buf: *c.wlr_scene_buffer = @ptrCast(node);
                 if (c.wlr_scene_surface_try_from_buffer(buf) != null) {
-                    const tree: *c.wlr_scene_tree = @ptrCast(node.parent);
-                    if (tree.node.data) |d| {
-                        focusToplevel(@ptrCast(@alignCast(d)));
+                    // バッファの直接の親は xdg surface 用のサブツリーで、data は
+                    // その祖先の toplevel ツリーに置いてある。親を遡って探す
+                    var cur: [*c]c.wlr_scene_node = node.parent;
+                    while (cur != null) {
+                        const tree: *c.wlr_scene_tree = @ptrCast(cur);
+                        if (tree.node.data) |d| {
+                            focusToplevel(@ptrCast(@alignCast(d)));
+                            break;
+                        }
+                        cur = tree.node.parent;
                     }
                 }
             }
