@@ -17,6 +17,7 @@ const std = @import("std");
 const c = @cImport({
     @cInclude("stdlib.h");
     @cInclude("signal.h");
+    @cInclude("unistd.h");
     @cInclude("wayland-server-core.h");
     @cInclude("xkbcommon/xkbcommon.h");
     @cInclude("wlr/backend.h");
@@ -179,13 +180,13 @@ fn handleNewInput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) v
 
     if (device.type == c.WLR_INPUT_DEVICE_KEYBOARD) {
         // 0.19 からは union でなく from_input_device() で専用型へ変換する
-        if (c.wlr_keyboard_from_input_device(device)) |wlr_kb| handleNewKeyboard(@ptrCast(wlr_kb));
+        if (c.wlr_keyboard_from_input_device(device)) |wlr_kb| handleNewKeyboard(@ptrCast(wlr_kb), device);
     } else if (device.type == c.WLR_INPUT_DEVICE_POINTER) {
         _ = c.wlr_cursor_attach_input_device(server.cursor, device);
     }
 }
 
-fn handleNewKeyboard(wlr_kb: *c.wlr_keyboard) void {
+fn handleNewKeyboard(wlr_kb: *c.wlr_keyboard, device: *c.wlr_input_device) void {
     const kb = server.gpa.create(Keyboard) catch return;
     kb.* = .{
         .wlr_keyboard = wlr_kb,
@@ -208,7 +209,8 @@ fn handleNewKeyboard(wlr_kb: *c.wlr_keyboard) void {
     kb.key.notify = handleKeyboardKey;
     c.wl_signal_add(&wlr_kb.events.key, &kb.key);
     kb.destroy.notify = handleKeyboardDestroy;
-    c.wl_signal_add(&wlr_kb.events.destroy, &kb.destroy);
+    // 0.19 から keyboard 自身の events に destroy は無い。input device 側を受ける
+    c.wl_signal_add(&device.events.destroy, &kb.destroy);
 
     c.wlr_seat_set_keyboard(server.seat, wlr_kb);
     logInfo("keyboard added", .{});
@@ -280,7 +282,7 @@ fn handleNewXdgSurface(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(
     const xdg_surface: *c.wlr_xdg_surface = @ptrCast(@alignCast(data.?));
     if (xdg_surface.role != c.WLR_XDG_SURFACE_ROLE_TOPLEVEL) return;
     // 匿名 union (xdg_surface.toplevel) は cimport から直接触れないため accessor を使う
-    const toplevel_handle = c.wlr_xdg_toplevel_try_from_wlr_surface(xdg_surface.surface) orelse return;
+    const toplevel_handle: *c.wlr_xdg_toplevel = @ptrCast(c.wlr_xdg_toplevel_try_from_wlr_surface(xdg_surface.surface) orelse return);
 
     const toplevel = server.gpa.create(Toplevel) catch return;
     toplevel.* = .{
@@ -373,11 +375,12 @@ fn focusToplevel(toplevel: *Toplevel) void {
     _ = c.wlr_seat_keyboard_notify_enter(server.seat, toplevel.xdg_surface.surface, null, 0, null);
 }
 
-fn layoutSize() struct { w: u32, h: u32 } {
-    if (c.wlr_output_layout_get_box(server.layout, null)) |box| {
-        if (box.width > 0 and box.height > 0) {
-            return .{ .w = @intCast(box.width), .h = @intCast(box.height) };
-        }
+fn layoutSize() struct { w: i32, h: i32 } {
+    // 0.19 から get_box は呼び出し側の box に書き込む方式
+    var box: c.wlr_box = std.mem.zeroes(c.wlr_box);
+    c.wlr_output_layout_get_box(server.layout, null, &box);
+    if (box.width > 0 and box.height > 0) {
+        return .{ .w = box.width, .h = box.height };
     }
     return .{ .w = 1024, .h = 768 };
 }
