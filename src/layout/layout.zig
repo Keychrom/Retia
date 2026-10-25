@@ -196,15 +196,18 @@ pub fn Layout(comptime Window: type) type {
             }
             const left = &self.columns.items[self.focused_column - 1];
             if (left.windows.items.len == 1) {
-                // 吸収: 左列の窓をフォーカス窓の直前に挿入し、左列を畳む
+                // 吸収: 左列の窓をフォーカス窓の直前に挿入し、左列を畳む。
+                // フォーカスは元の窓に留まる
                 const w = left.windows.pop().?;
                 try self.focusedColumnPtr().windows.insert(self.allocator, self.focused_window, w);
+                self.focused_window += 1;
                 _ = self.columns.orderedRemove(self.focused_column - 1);
                 self.focused_column -= 1;
             } else {
                 // 取り込み: 左列の末尾の窓をフォーカス窓の直前に挿入
                 const w = left.windows.pop().?;
                 try self.focusedColumnPtr().windows.insert(self.allocator, self.focused_window, w);
+                self.focused_window += 1;
             }
         }
 
@@ -436,6 +439,7 @@ test "cycleColumnWidth: 1/3 → 1/2 → 2/3 → 1/3" {
     try l.addWindow(&w1);
 
     const col = l.focusedColumnPtr();
+    col.width_ratio = 0.5; // 新規列は空レイアウト時 ratio 1.0 で作られるため揃える
     l.cycleColumnWidth();
     try testing.expectApproxEqAbs(@as(f32, 1.0 / 2.0), col.width_ratio, 0.001);
     l.cycleColumnWidth();
