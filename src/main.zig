@@ -270,7 +270,11 @@ fn handleNewOutput(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) 
     c.wlr_output_effective_resolution(wlr_output, &ew, &eh);
     if (ew > 0 and eh > 0) server.layout.setUsableSize(ew, eh);
     server.outputs.append(server.gpa, output) catch {};
+    // VirtualBox (vmwgfx) の HW カーソルが表示されないためソフトウェアカーソルを
+    // 強制する。scene commit がカーソルを描画に混ぜてくれる
+    c.wlr_output_lock_software_cursors(wlr_output, true);
     server.applyLayout();
+    c.wlr_cursor_set_xcursor(server.cursor, server.xcursor_manager, "default");
 }
 
 fn handleOutputFrame(listener: [*c]c.wl_listener, data: ?*anyopaque) callconv(.c) void {
