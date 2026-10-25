@@ -87,6 +87,8 @@ pub fn Layout(comptime Window: type) type {
                     _ = col.windows.orderedRemove(wi);
 
                     if (col.windows.items.len == 0) {
+                        // 空になった列の確保済み capacity を解放してから畳む
+                        col.deinit(self.allocator);
                         _ = self.columns.orderedRemove(ci);
                         self.clampFocusAfterColumnRemoval(ci);
                     } else {
@@ -201,6 +203,7 @@ pub fn Layout(comptime Window: type) type {
                 const w = left.windows.pop().?;
                 try self.focusedColumnPtr().windows.insert(self.allocator, self.focused_window, w);
                 self.focused_window += 1;
+                left.deinit(self.allocator); // 空リストの capacity を解放
                 _ = self.columns.orderedRemove(self.focused_column - 1);
                 self.focused_column -= 1;
             } else {
@@ -229,6 +232,7 @@ pub fn Layout(comptime Window: type) type {
             if (right.windows.items.len == 1) {
                 const w = right.windows.pop().?;
                 try col.windows.insert(self.allocator, self.focused_window + 1, w);
+                right.deinit(self.allocator); // 空リストの capacity を解放
                 _ = self.columns.orderedRemove(right_idx);
             } else {
                 const w = right.windows.orderedRemove(0);
@@ -441,11 +445,11 @@ test "cycleColumnWidth: 1/3 → 1/2 → 2/3 → 1/3" {
     const col = l.focusedColumnPtr();
     col.width_ratio = 0.5; // 新規列は空レイアウト時 ratio 1.0 で作られるため揃える
     l.cycleColumnWidth();
-    try testing.expectApproxEqAbs(@as(f32, 1.0 / 2.0), col.width_ratio, 0.001);
-    l.cycleColumnWidth();
     try testing.expectApproxEqAbs(@as(f32, 2.0 / 3.0), col.width_ratio, 0.001);
     l.cycleColumnWidth();
     try testing.expectApproxEqAbs(@as(f32, 1.0 / 3.0), col.width_ratio, 0.001);
+    l.cycleColumnWidth();
+    try testing.expectApproxEqAbs(@as(f32, 1.0 / 2.0), col.width_ratio, 0.001);
 }
 
 test "geometry: 単窓は gap を除いて全面" {
