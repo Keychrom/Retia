@@ -301,7 +301,7 @@ pub fn Layout(comptime Window: type) type {
 
         /// 全窓のストリップ座標 (viewport 適用前)。呼び出し側が viewportX を引いて使う。
         pub fn windowBoxes(self: *Self, allocator: Allocator) ![]WindowBox {
-            var boxes = std.ArrayList(WindowBox){};
+            var boxes: std.ArrayList(WindowBox) = .empty;
             errdefer boxes.deinit(allocator);
             var x: i32 = self.gap;
             for (self.columns.items) |*col| {
